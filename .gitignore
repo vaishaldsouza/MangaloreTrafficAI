@@ -1,0 +1,31 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest / Coverage
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Models
+models/*.zip
+
+# SUMO OS maps / cache logs
+simulation/output/
+simulation/*.osm
+simulation/*.net.xml
+simulation/*.rou.xml
+simulation/trips.xml
+
+# Environment variables
+.env
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/
