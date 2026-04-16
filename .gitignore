@@ -1,31 +1,64 @@
-# Byte-compiled / optimized / DLL files
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.pyo
 *$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
 
-# Pytest / Coverage
+# ── Testing / Coverage ────────────────────────────────────────────────────────
 .pytest_cache/
 htmlcov/
 .coverage
 .coverage.*
 coverage.xml
+*.cover
 
-# Models
-models/*.zip
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
 
-# SUMO OS maps / cache logs
-simulation/output/
-simulation/*.osm
-simulation/*.net.xml
-simulation/*.rou.xml
-simulation/trips.xml
+# ── Trained model files (large binaries — regenerate with train scripts) ──────
+models/*.zip        # SB3 PPO / DQN checkpoints
+models/*.pkl        # scikit-learn Random Forest
+models/*.pt         # PyTorch LSTM / GCN weights
 
-# Environment variables
+# ── SUMO simulation artefacts (regenerate with generate_network.py) ───────────
+simulation/output/       # SUMO runtime output (summary.xml, tripinfo.xml)
+simulation/*.osm         # raw OpenStreetMap XML  (~1.5 MB)
+simulation/*.net.xml     # SUMO road network      (~11 MB)
+simulation/*.rou.xml     # generated routes
+simulation/trips.xml     # random-trip source file
+
+# ── Logs / TensorBoard ────────────────────────────────────────────────────────
+logs/
+runs/
+*.log
+
+# ── Environment variables (keep .env.example in repo, not .env) ───────────────
 .env
 
-# VSCode / IDE
+# ── OS / editor junk ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
+*.iml
 
-# Streamlit
+# ── Streamlit runtime ─────────────────────────────────────────────────────────
 .streamlit/
+
+# ── osmnx / networkx graph cache ─────────────────────────────────────────────
+cache/
+
+# ── Jupyter notebooks (optional, keep if you add them) ───────────────────────
+# .ipynb_checkpoints/
