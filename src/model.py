@@ -2,40 +2,85 @@ import numpy as np
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import BaseCallback
 import os
+import pandas as pd
+
+
+class TrainingCurveCallback(BaseCallback):
+    """Collect a lightweight reward-vs-timestep curve during SB3 training."""
+
+    def __init__(self, log_freq=500, verbose=0):
+        super().__init__(verbose)
+        self.log_freq = log_freq
+        self._reward_window = []
+        self.records = []
+
+    def _on_step(self) -> bool:
+        rewards = self.locals.get("rewards")
+        if rewards is not None:
+            reward_arr = np.array(rewards, dtype=float).reshape(-1)
+            self._reward_window.extend(reward_arr.tolist())
+
+        if self.n_calls % self.log_freq == 0 and self._reward_window:
+            mean_reward = float(np.mean(self._reward_window[-self.log_freq:]))
+            self.records.append({
+                "timestep": int(self.num_timesteps),
+                "mean_reward": mean_reward,
+            })
+        return True
+
+    def to_frame(self) -> pd.DataFrame:
+        return pd.DataFrame(self.records)
 
 class TrafficRLModel:
-    def __init__(self, algo="PPO", model_path="models/traffic_model"):
+    def __init__(self, algo="PPO", model_path="models/traffic_model", hyperparams=None):
         self.algo = algo
         self.model_path = model_path
         self.model = None
+        self.hyperparams = hyperparams or {}
+        self.training_curve = pd.DataFrame(columns=["timestep", "mean_reward"])
         os.makedirs("models", exist_ok=True)
 
-    def train(self, env, total_timesteps=50_000):
+    def train(self, env, total_timesteps=50_000, log_freq=500):
         """Train the RL agent."""
         check_env(env)  # validates your custom env
         env = Monitor(env)
+        callback = TrainingCurveCallback(log_freq=log_freq)
 
         if self.algo == "PPO":
+            ppo_defaults = {
+                "learning_rate": 3e-4,
+                "n_steps": 2048,
+                "batch_size": 64,
+                "n_epochs": 10,
+                "verbose": 1,
+            }
+            ppo_defaults.update(self.hyperparams)
             self.model = PPO(
-                "MlpPolicy", env,
-                learning_rate=3e-4,
-                n_steps=2048,
-                batch_size=64,
-                n_epochs=10,
-                verbose=1
+                "MlpPolicy",
+                env,
+                **ppo_defaults,
             )
         elif self.algo == "DQN":
+            dqn_defaults = {
+                "learning_rate": 1e-4,
+                "buffer_size": 50_000,
+                "learning_starts": 1000,
+                "batch_size": 32,
+                "verbose": 1,
+            }
+            dqn_defaults.update(self.hyperparams)
             self.model = DQN(
-                "MlpPolicy", env,
-                learning_rate=1e-4,
-                buffer_size=50_000,
-                learning_starts=1000,
-                batch_size=32,
-                verbose=1
+                "MlpPolicy",
+                env,
+                **dqn_defaults,
             )
+        else:
+            raise ValueError(f"Unsupported algorithm: {self.algo}")
 
-        self.model.learn(total_timesteps=total_timesteps)
+        self.model.learn(total_timesteps=total_timesteps, callback=callback)
+        self.training_curve = callback.to_frame()
         self.model.save(self.model_path)
         print(f"Model saved to {self.model_path}")
         return self.model
@@ -72,6 +117,16 @@ class TrafficRLModel:
         avg = np.mean(rewards)
         print(f"Avg reward over {n_episodes} episodes: {avg:.4f}")
         return avg
+
+    def save_training_curve(self, output_path):
+        """Persist the collected training curve as CSV."""
+        if self.training_curve.empty:
+            raise ValueError("No training curve available. Train the model first.")
+        out_dir = os.path.dirname(output_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        self.training_curve.to_csv(output_path, index=False)
+        print(f"Training curve saved to {output_path}")
 
 def compare_baseline_vs_rl(env_class, env_kwargs, model_path, n_episodes=5):
     """

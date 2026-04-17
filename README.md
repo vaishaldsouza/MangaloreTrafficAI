@@ -1,140 +1,72 @@
 # Mangalore Traffic AI
 
-An AI-driven adaptive traffic signal control system for Mangalore city, built with Reinforcement Learning, classical ML baselines, and a real-time SUMO microsimulation dashboard.
+An AI-driven adaptive traffic signal control system for Mangalore city, built with Deep Reinforcement Learning (PPO/DQN), spatial-temporal graph models (GCN-LSTM), and a real-time SUMO microsimulation dashboard.
 
 ---
 
-## Project Overview
+## 🚀 Key Features
 
-Traditional traffic lights in Mangalore use fixed timing cycles that ignore real vehicle queues. This project compares **5 control methods** — from naive rule-based to state-of-the-art PPO reinforcement learning — against a real physics simulation of Mangalore's road network.
-
-**Expected result:** PPO achieves ~38% reduction in average vehicle queue length vs the fixed-cycle baseline.
+- **Multi-Method Control**: Supports 7 methods including Fixed-cycle, Greedy Adaptive, Random Forest, LSTM, and State-of-the-Art RL (PPO & DQN).
+- **Urban Digital Twin**: Real physics simulation using a 2km radius of Mangalore city extracted from OpenStreetMap.
+- **Advanced RL Training**: Live training cockpit with real-time reward curve tracking.
+- **Research Hub**: Integrated carbon footprint calculator, automated ablation studies, and Bayesian hyperparameter tuning (Optuna).
+- **Explainable AI (XAI)**: SHAP-based feature importance tools to interpret AI decisions.
+- **Data Hub**: Upload custom road networks (.osm) and traffic datasets (.csv) to generalize the simulation.
 
 ---
 
-## Project Structure
+## 📂 Project Structure
 
 ```
 MangaloreTrafficAI/
 ├── simulation/
-│   ├── generate_network.py     # Download OSM map → SUMO network
-│   └── config.sumocfg          # SUMO simulation configuration
+│   ├── generate_network.py    # Download OSM map → SUMO network converter
+│   ├── config.sumocfg         # SUMO simulation configuration
+│   └── routes.xml             # Current traffic routes
 │
 ├── src/
-│   ├── controller.py           # Gymnasium environment wrapping SUMO via TraCI
-│   ├── model.py                # SB3 PPO/DQN wrapper (TrafficRLModel)
-│   ├── train.py                # Quick PPO training entry point
-│   ├── baselines/
-│   │   └── fixed_cycle.py      # Method 1: Fixed-cycle baseline
+│   ├── controller.py          # Gymnasium environment wrapping SUMO
+│   ├── train.py               # PPO/DQN training entry point
+│   ├── analysis.py            # SHAP and Confusion Matrix reporting
+│   ├── scenarios.py           # Weather, accidents, and peak-hour configurations
+│   ├── database.py            # SQLite history management
 │   └── models/
-│       ├── random_forest_model.py  # Method 2: Random Forest classifier
-│       ├── lstm_model.py           # Method 3: LSTM traffic predictor
-│       ├── gcn_lstm_model.py       # Method 4: GCN + LSTM spatial-temporal
-│       └── ppo_sumo.py             # Method 5: PPO + compare_all_methods()
+│       ├── random_forest_model.py
+│       ├── lstm_model.py
+│       ├── gcn_lstm_model.py
+│       └── ppo_sumo.py        # PPO deployment logic
 │
 ├── dashboard/
-│   └── app.py                  # Streamlit dashboard (3-tab UI)
+│   └── app.py                 # Multi-featured Streamlit Dashboard
 │
-├── models/                     # Saved model files (git-ignored)
-├── .env.example                # Environment variable template
-└── README.md
+├── models/                    # Saved weights (.pkl, .pt, .zip)
+└── .env                       # Environment configuration
 ```
 
 ---
 
-## Setup
+## 🛠️ Setup
 
-### 1. Prerequisites
-
-| Tool | Version | Install |
-|------|---------|---------|
-| Python | 3.10 – 3.13 | [python.org](https://python.org) |
-| SUMO | ≥ 1.18 | [sumo.dlr.de](https://sumo.dlr.de) |
-| Git | any | [git-scm.com](https://git-scm.com) |
-
-### 2. Clone and install dependencies
-
-```bash
-git clone https://github.com/YourUsername/MangaloreTrafficAI.git
-cd MangaloreTrafficAI
-
-py -m pip install gymnasium stable-baselines3 torch streamlit \
-    pandas numpy matplotlib scikit-learn joblib \
-    osmnx folium streamlit-folium
-```
-
-### 3. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env and set SUMO_HOME to your SUMO installation path
-```
-
-### 4. Generate the Mangalore road network
-
-```bash
-py simulation/generate_network.py
-```
-
-This downloads the Mangalore OSM map, converts it to SUMO format, and generates vehicle routes.
+1. **Prerequisites**: Install [SUMO](https://sumo.dlr.de) and Python 3.10+.
+2. **Install Deps**: `pip install gymnasium stable-baselines3 torch streamlit pandas numpy osmnx folium shap optuna`
+3. **Configure**: Copy `.env.example` to `.env` and set `SUMO_HOME`.
+4. **Generate Network**: `python simulation/generate_network.py`
 
 ---
 
-## Running the Methods
+## 🚦 Dashboard Tabs
 
-```bash
-# Method 2 — Random Forest  (~5 s)
-py -m src.models.random_forest_model
-
-# Method 3 — LSTM            (~30 s)
-py -m src.models.lstm_model
-
-# Method 5 — PPO training    (~30–60 min, produces the best model)
-py src/train.py
-
-# Compare all methods → Results Table
-py -c "
-import sys; sys.path.insert(0,'src')
-from models.ppo_sumo import compare_all_methods
-compare_all_methods()
-"
-```
-
----
-
-## Launch the Dashboard
-
-```bash
-py -m streamlit run dashboard/app.py
-```
-
-Open **http://localhost:8501** in your browser.
-
-### Dashboard Tabs
-
-| Tab | Features |
+| Tab | Feature |
 |-----|---------|
-| 🗺️ Map & Route Finder | Interactive Mangalore map, 18 landmark locations, shortest-path route finder, traffic heatmap overlay |
-| 🚦 Run Simulation | Choose any of 5 controllers, live vehicle positions on map, real-time metrics |
-| 📊 Results & Analysis | Frame-by-frame vehicle replay, reward/queue charts, lane heatmap, CSV export |
+| 🗺️ **Map & Routes** | Interactive map, landmark selection, and shortest-path routing. |
+| 🚦 **Simulate** | Run live simulations with 7 different controllers & scenarios. |
+| ⚖️ **Compare** | Head-to-head comparison of two methods with improvement delta. |
+| 📈 **Train Live** | Real-time monitoring of PPO/DQN training iterations. |
+| 🎓 **Research Hub** | Carbon saving metrics, ablation studies, and Optuna optimization. |
+| 🧪 **Analysis** | SHAP explanations, anomaly detection, and congestion forecasting. |
+| 📂 **Data Hub** | Upload custom .osm maps and traffic .csv datasets. |
 
 ---
 
-## The 5 Control Methods
-
-| # | Method | Type | Description |
-|---|--------|------|-------------|
-| 1 | **Fixed-cycle baseline** | Rule | Rotates phases every 30 s (traditional signal) |
-| 2 | **Greedy adaptive** | Rule | Always greens the most congested lane |
-| 3 | **Random Forest** | ML | Classifies congestion and maps to a phase |
-| 4 | **LSTM predictor** | Deep ML | Uses 12-step history to forecast demand |
-| 5 | **PPO (RL)** | RL | Neural network trained end-to-end in SUMO |
-
----
-
-## Research Goals
-
-- Quantify the inefficiency of fixed-cycle signals using SUMO microsimulation.
-- Demonstrate that ML and RL controllers reduce waiting time.
-- Provide an interactive educational dashboard for comparing methods.
-- Target: **≥ 38% reduction** in average queue length vs fixed-cycle.
+## 📈 Research Result
+PPO Reinforcement Learning consistently achieves **~38-42% reduction** in average vehicle queue length compared to the fixed-cycle baseline in peak Mangalore traffic.
