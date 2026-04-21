@@ -50,8 +50,17 @@ export default function HistoryPage() {
         headers: { Authorization: `Bearer ${token}` }
       });
       
+      if (res.status === 401) {
+        console.error("Unauthorized access to history");
+        setRuns([]);
+        setLoading(false);
+        return;
+      }
+
       if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
+        setRuns([]);
+        setLoading(false);
+        return;
       }
       
       const data = await res.json();

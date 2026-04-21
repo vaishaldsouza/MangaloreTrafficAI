@@ -45,12 +45,15 @@ export default function ResearchPage() {
       const res = await fetch("http://localhost:8000/research/literature", {
         headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
       });
+      if (res.status === 401) return;
       const data = await res.json();
-      setLiteratureData(data.map((d: any) => ({
-        name: d.Method,
-        reduction: d["Reduction %"],
-        source: d.Source
-      })));
+      if (Array.isArray(data)) {
+        setLiteratureData(data.map((d: any) => ({
+          name: d.Method,
+          reduction: d["Reduction %"],
+          source: d.Source
+        })));
+      }
     } catch (e) { console.error(e); }
   };
 
@@ -61,12 +64,17 @@ export default function ResearchPage() {
         method: "POST",
         headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
       });
+      if (res.status === 401) {
+        setIsAblating(false);
+        return;
+      }
       const data = await res.json();
-      // data: [{Configuration, Accuracy %, Impact}]
-      setAblationData(data.map((d: any) => ({
-        feature: d.Configuration,
-        impact: parseFloat(d["Accuracy %"]) / 100
-      })));
+      if (Array.isArray(data)) {
+        setAblationData(data.map((d: any) => ({
+          feature: d.Configuration,
+          impact: parseFloat(d["Accuracy %"]) / 100
+        })));
+      }
     } catch (e) { console.error(e); }
     setIsAblating(false);
   };

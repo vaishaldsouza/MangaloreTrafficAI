@@ -43,9 +43,23 @@ export default function AutomaticBenchmarking() {
       const res = await fetch("http://localhost:8000/analytics/history", {
         headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
       });
+      
+      if (res.status === 401) {
+        setRuns([]);
+        setLoading(false);
+        return;
+      }
+
       const data = await res.json();
-      setRuns(data);
-    } catch (e) { console.error(e); }
+      if (Array.isArray(data)) {
+        setRuns(data);
+      } else {
+        setRuns([]);
+      }
+    } catch (e) { 
+      console.error(e); 
+      setRuns([]);
+    }
     setLoading(false);
   };
 
