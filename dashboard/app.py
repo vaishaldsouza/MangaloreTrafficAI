@@ -591,12 +591,30 @@ def run_python_simulation(method, max_steps, reward_type="wait_time", dataset_df
 
     for step in range(max_steps):
         row_src = df_src.iloc[step % len(df_src)]
-        demand = max(0.0, float(row_src.get("vehicle_count", 20.0)))
+        # Each dataset row = 1 hour of traffic.
+        # Convert to per-step rate (1 step ≈ 5s, 720 steps/hour → /12 gives
+        # a 5-min count which is the standard traffic survey interval).
+        # Add Poisson noise so each step is stochastic and realistic.
+        raw_demand = max(0.0, float(row_src.get("vehicle_count", 20.0)))
+        demand_per_step = raw_demand / 12.0          # treat row as hourly → 5-min bucket
+        # Stochastic arrivals: Poisson(λ) with per-lane split
         split = np.array([0.30, 0.25, 0.25, 0.20], dtype=float)
-        arrivals = demand * split
+        lane_lambdas = demand_per_step * split
+        arrivals = np.array([
+            float(np.random.poisson(max(0.0, lam))) for lam in lane_lambdas
+        ], dtype=float)
+        demand = demand_per_step          # keep 'demand' for downstream logging
         queues += arrivals
 
-        obs = np.concatenate([queues / 20.0, np.clip(queues / 50.0, 0, 1)]).astype(np.float32)
+        # Build obs: 4 queue ratios + 4 clipped saturation + 4 padding zeros
+        # = 12 features, matching the PPO/DQN model's trained observation space (12,).
+        # The trained model sees 6 real SUMO lanes × 2 features each = 12.
+        # Our Python sim only has 4 virtual lanes, so we zero-pad to 12.
+        obs = np.concatenate([
+            queues / 20.0,                     # 4: normalised queue lengths
+            np.clip(queues / 50.0, 0, 1),      # 4: saturation ratio
+            np.zeros(4, dtype=np.float32),     # 4: padding → total = 12
+        ]).astype(np.float32)
         action = get_action(
             method, obs, env, step,
             rf_clf=rf_clf, rf_le=rf_le,
@@ -605,12 +623,16 @@ def run_python_simulation(method, max_steps, reward_type="wait_time", dataset_df
         action = int(action) % env.action_space.n
 
         service = np.zeros(4, dtype=float)
+        # Service: 2.5 vehicles/step per active green lane
+        # At peak demand (90 veh/hour): λ = 90/12 = 7.5/step arriving total
+        # Service clears 2.5×2 = 5/step on green → moderate queue build-up → congested
+        # At night (10 veh/hour): λ = 10/12 ≈ 0.8/step → service exceeds arrivals → free
         if action in [0, 1]:
-            service[0] = 6.0 if action == 0 else 2.0
-            service[1] = 6.0 if action == 0 else 2.0
+            service[0] = 2.5 if action == 0 else 0.3
+            service[1] = 2.5 if action == 0 else 0.3
         else:
-            service[2] = 6.0 if action == 2 else 2.0
-            service[3] = 6.0 if action == 2 else 2.0
+            service[2] = 2.5 if action == 2 else 0.3
+            service[3] = 2.5 if action == 2 else 0.3
 
         served = np.minimum(queues, service)
         queues = np.maximum(0.0, queues - served)

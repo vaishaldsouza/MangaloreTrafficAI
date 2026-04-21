@@ -119,6 +119,17 @@ desktop.ini
 *.ipynb
 
 
-# ── Node.js (if any JS tooling is added) ─────────────────────────────────────
+# ── Frontend & Node.js (Dashboard V2) ────────────────────────────────────────
 node_modules/
+.next/
+out/
+build/
+.vercel
+*.tsbuildinfo
 package-lock.json
+
+# Local env files
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

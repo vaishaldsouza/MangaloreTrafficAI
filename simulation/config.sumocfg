@@ -12,6 +12,7 @@
   <output>
     <summary-output value="output/summary.xml"/>
     <tripinfo-output value="output/tripinfo.xml"/>
+    <fcd-output value="output/fcd.xml"/>
   </output>
   <processing>
     <ignore-route-errors value="true"/>

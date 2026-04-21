@@ -29,6 +29,14 @@ else:
 import traci
 import traci.constants as tc
 
+# CV Imports (optional/lazy)
+try:
+    from .cv.cv_pipeline import CVPipeline
+    from .cv.sumo_virtual_camera import render_topdown_frame, get_junction_bounds
+    CV_AVAILABLE = True
+except ImportError:
+    CV_AVAILABLE = False
+
 
 class SumoTrafficEnv(gym.Env):
     """
@@ -58,6 +66,7 @@ class SumoTrafficEnv(gym.Env):
         max_steps: int = 3600,
         scenario=None,            # ScenarioConfig | None
         reward_type: str = "wait_time",  # "wait_time" or "throughput"
+        use_cv: bool = False,
     ):
 
         super().__init__()
@@ -70,6 +79,12 @@ class SumoTrafficEnv(gym.Env):
         self.step_count    = 0
         self._sumo_running = False
         self._accident_done = False
+        self.use_cv = use_cv
+        self.cv_pipeline = None
+
+        if self.use_cv and not CV_AVAILABLE:
+            print("[WARN] CV requested but dependencies missing. Falling back to TraCI.")
+            self.use_cv = False
 
         # Dummy sizes — overwritten after SUMO starts
         self._num_lanes  = 8
@@ -133,6 +148,13 @@ class SumoTrafficEnv(gym.Env):
         )
         self.action_space = spaces.Discrete(self._num_phases)
 
+        # Initialize CV pipeline if requested
+        if self.use_cv:
+            self.cv_pipeline = CVPipeline(frame_width=640, frame_height=480)
+            # Infer network path from config path
+            net_path = self.config_path.replace("config.sumocfg", "mangalore.net.xml")
+            self._world_bounds = get_junction_bounds(net_path, self.junction_id)
+
         # Apply scenario settings
         if self.scenario is not None:
             self._apply_scenario()
@@ -161,11 +183,47 @@ class SumoTrafficEnv(gym.Env):
         self._accident_done = True
 
     def _get_obs(self) -> np.ndarray:
+        if self.use_cv:
+            return self._get_obs_from_cv()
+            
         counts, waits = [], []
         for lane in self._controlled_lanes:
             counts.append(traci.lane.getLastStepVehicleNumber(lane) / 20.0)
             waits.append(traci.lane.getWaitingTime(lane) / 300.0)
         obs = np.array(counts + waits, dtype=np.float32)
+        return np.clip(obs, 0.0, 1.0)
+
+    def _get_obs_from_cv(self) -> np.ndarray:
+        """
+        Alternative to _get_obs() — uses internal CV pipeline by rendering
+        a synthetic frame from TraCI data.
+        """
+        # 1. Collect current vehicle positions from TraCI
+        vehicles = []
+        for vid in traci.vehicle.getIDList():
+            x, y = traci.vehicle.getPosition(vid)
+            type_id = traci.vehicle.getTypeID(vid)
+            vehicles.append({"x": x, "y": y, "type": type_id})
+
+        # 2. Render synthetic top-down frame
+        frame = render_topdown_frame(vehicles, self._world_bounds, (640, 480))
+
+        # 3. Process frame through CV pipeline
+        counts = self.cv_pipeline.process_frame(frame)
+
+        # 4. Map to observation space (N/S/E/W -> first 4 lanes)
+        lanes = list(self._controlled_lanes)
+        cv_lanes = ["N", "S", "E", "W"]
+        norm_counts = []
+        for i in range(len(lanes)):
+            cv_key = cv_lanes[i % 4]
+            norm_counts.append(counts.get(cv_key, 0) / 20.0)
+
+        # 5. Approximate waiting time (CV doesn't give this directly in one-shot)
+        # Using heuristic: queue size * 5 seconds normalized by 300s
+        waits = [c * 5.0 / 300.0 for c in norm_counts]
+        
+        obs = np.array(norm_counts + waits, dtype=np.float32)
         return np.clip(obs, 0.0, 1.0)
 
     def _get_reward(self) -> float:
@@ -210,12 +268,39 @@ class SumoTrafficEnv(gym.Env):
             lane: traci.lane.getLastStepVehicleNumber(lane)
             for lane in self._controlled_lanes
         }
+        
+        # Get vehicle locations for the map overlay
+        vehicles = []
+        try:
+            for vid in traci.vehicle.getIDList():
+                x, y = traci.vehicle.getPosition(vid)
+                lon, lat = traci.simulation.convertGeo(x, y)
+                vehicles.append({
+                    "id": vid,
+                    "lat": lat,
+                    "lng": lon,
+                    "speed": traci.vehicle.getSpeed(vid),
+                    "type": traci.vehicle.getTypeID(vid)
+                })
+        except Exception:
+            pass
+
+        # Get phase name for the action log
+        try:
+            logic = traci.trafficlight.getAllProgramLogics(self.junction_id)[0]
+            phase_idx = traci.trafficlight.getPhase(self.junction_id)
+            phase_name = logic.phases[phase_idx].name or f"Phase {phase_idx}"
+        except Exception:
+            phase_name = f"Phase {traci.trafficlight.getPhase(self.junction_id)}"
+
         info = {
             "step":           self.step_count,
             "junction_id":    self.junction_id,
             "lane_counts":    counts,
             "current_phase":  traci.trafficlight.getPhase(self.junction_id),
+            "phase_name":     phase_name,
             "total_vehicles": traci.simulation.getMinExpectedNumber(),
+            "vehicles":       vehicles,
             "co2_mg":         self._get_co2(),
             "scenario":       self.scenario.name if self.scenario else "Normal",
             "accident_active": self._accident_done,

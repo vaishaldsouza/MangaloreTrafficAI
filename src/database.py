@@ -48,6 +48,14 @@ class SimulationDB:
                     created_at     TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS reset_tokens (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username       TEXT NOT NULL,
+                    token          TEXT UNIQUE NOT NULL,
+                    expires_at     REAL NOT NULL
+                )
+            """)
             conn.commit()
 
     # ── admin auth ────────────────────────────────────────────────────────────
@@ -95,6 +103,51 @@ class SimulationDB:
         with sqlite3.connect(self.db_path) as conn:
             count = conn.execute("SELECT COUNT(*) FROM admins").fetchone()[0]
         return count > 0
+
+    # ── recovery ──────────────────────────────────────────────────────────────
+
+    def create_reset_token(self, username: str, expires_in: int = 3600) -> str:
+        """Generates a secure token for password reset."""
+        import time
+        token = secrets.token_urlsafe(32)
+        expires_at = time.time() + expires_in
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM reset_tokens WHERE username = ?", (username,))
+            conn.execute(
+                "INSERT INTO reset_tokens (username, token, expires_at) VALUES (?, ?, ?)",
+                (username, token, expires_at)
+            )
+            conn.commit()
+        return token
+
+    def validate_reset_token(self, token: str) -> str | None:
+        """Returns the username if token is valid, else None."""
+        import time
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT username FROM reset_tokens WHERE token = ? AND expires_at > ?",
+                (token, time.time())
+            )
+            row = cursor.fetchone()
+            if row:
+                username = row[0]
+                # Consume token
+                conn.execute("DELETE FROM reset_tokens WHERE token = ?", (token,))
+                conn.commit()
+                return username
+        return None
+
+    def reset_password(self, username: str, new_password: str):
+        """Updates admin password with new hash and salt."""
+        salt = secrets.token_hex(16)
+        password_hash = self._hash_password(new_password, salt)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE admins SET password_hash = ?, salt = ? WHERE username = ?",
+                (password_hash, salt, username)
+            )
+            conn.commit()
 
     # ── write ─────────────────────────────────────────────────────────────────
 
