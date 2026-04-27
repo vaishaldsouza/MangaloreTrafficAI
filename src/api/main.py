@@ -24,6 +24,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import Request, HTTPException
+from src.api.auth import SECRET_KEY, ALGORITHM
+from jose import jwt, JWTError
+
+UNPROTECTED = {"/", "/auth/login", "/auth/register", "/auth/status", "/auth/forgot-password", "/auth/reset-password"}
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if request.url.path in UNPROTECTED or request.url.path.startswith("/simulation/ws"):
+        return await call_next(request)
+    
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    
+    token = auth_header.replace("Bearer ", "")
+    try:
+        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    return await call_next(request)
+
 from src.api.endpoints import admin, simulation, analytics, research
 
 # Include routers

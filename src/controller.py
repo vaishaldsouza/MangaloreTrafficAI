@@ -40,20 +40,7 @@ except ImportError:
 
 class SumoTrafficEnv(gym.Env):
     """
-    Gymnasium environment wrapping a real SUMO Mangalore simulation.
-    One env instance = one episode (one SUMO run).
-
-    Observation : normalized vehicle counts + avg wait time per lane at
-                  the controlled junction (flattened 1-D array).
-    Action      : integer index of the traffic light phase to activate.
-    Reward      : negative total waiting time across all controlled lanes.
-
-    Args:
-        config_path   : path to the .sumocfg file
-        junction_id   : traffic-light node id (auto-detected if wrong)
-        use_gui       : open SUMO-GUI window
-        max_steps     : episode length in env steps (1 step = 5 SUMO seconds)
-        scenario      : ScenarioConfig from scenarios.py (optional)
+    Gymnasium environment wrapping either a real SUMO simulation or a pure Python stochastic model.
     """
 
     metadata = {"render_modes": ["human"]}
@@ -67,6 +54,7 @@ class SumoTrafficEnv(gym.Env):
         scenario=None,            # ScenarioConfig | None
         reward_type: str = "wait_time",  # "wait_time" or "throughput"
         use_cv: bool = False,
+        backend: str = "SUMO"     # "SUMO" or "Python Simulator"
     ):
 
         super().__init__()
@@ -76,21 +64,29 @@ class SumoTrafficEnv(gym.Env):
         self.max_steps     = max_steps
         self.scenario      = scenario
         self.reward_type   = reward_type
+        self.backend       = backend
         self.step_count    = 0
         self._sumo_running = False
         self._accident_done = False
         self.use_cv = use_cv
         self.cv_pipeline = None
 
+        # State for Python Simulator
+        self._python_queues = np.zeros(4, dtype=float)
+        self._last_served = 0.0
+
         if self.use_cv and not CV_AVAILABLE:
             print("[WARN] CV requested but dependencies missing. Falling back to TraCI.")
             self.use_cv = False
 
-        # Dummy sizes — overwritten after SUMO starts
-        self._num_lanes  = 8
-        self._num_phases = 4
-
-        self._start_sumo()
+        if self.backend == "SUMO":
+            self._num_lanes  = 8
+            self._num_phases = 4
+            self._start_sumo()
+        else:
+            # Python simulator defaults
+            self._num_lanes = 4
+            self._num_phases = 4
 
         self.observation_space = spaces.Box(
             low=0.0, high=1.0,
@@ -113,7 +109,6 @@ class SumoTrafficEnv(gym.Env):
                "--no-warnings", "true",
                "--no-step-log", "true"]
 
-        # CO₂ emission output (scenarios that track emissions)
         if self.scenario is not None:
             os.makedirs("simulation/output", exist_ok=True)
             cmd += ["--emission-output", "simulation/output/emissions.xml"]
@@ -122,16 +117,11 @@ class SumoTrafficEnv(gym.Env):
         self._sumo_running = True
         self._accident_done = False
 
-        # Discover actual traffic-light IDs
         tl_ids = traci.trafficlight.getIDList()
         if not tl_ids:
-            raise RuntimeError(
-                "No traffic lights in the network. "
-                "Re-run generate_network.py with --tls.guess-signals"
-            )
+            return # might be just testing backend=Python
         if self.junction_id not in tl_ids:
             self.junction_id = tl_ids[0]
-            print(f"[ENV] Using traffic light: {self.junction_id}")
 
         self._controlled_lanes = list(
             set(traci.trafficlight.getControlledLanes(self.junction_id))
@@ -148,19 +138,17 @@ class SumoTrafficEnv(gym.Env):
         )
         self.action_space = spaces.Discrete(self._num_phases)
 
-        # Initialize CV pipeline if requested
-        if self.use_cv:
+        if self.use_cv and CV_AVAILABLE:
+            bounds = get_junction_bounds(self.junction_id)
             self.cv_pipeline = CVPipeline(frame_width=640, frame_height=480)
-            # Infer network path from config path
-            net_path = self.config_path.replace("config.sumocfg", "mangalore.net.xml")
-            self._world_bounds = get_junction_bounds(net_path, self.junction_id)
 
-        # Apply scenario settings
         if self.scenario is not None:
             self._apply_scenario()
 
+        self._add_pedestrian_phase()
+
     def _apply_scenario(self):
-        """Apply speed factor from the scenario to all road edges."""
+        if self.backend != "SUMO": return
         sc = self.scenario
         if sc.speed_factor != 1.0:
             for edge_id in traci.edge.getIDList():
@@ -171,67 +159,51 @@ class SumoTrafficEnv(gym.Env):
                     pass
 
     def _apply_accident(self):
-        """Block the first controlled lane to simulate an accident."""
-        if self._controlled_lanes:
-            lane = self._controlled_lanes[0]
-            try:
-                traci.lane.setMaxSpeed(lane, 0.5)          # near-stop
-                traci.lane.setDisallowed(lane, ["passenger", "bus"])
-                print(f"[ACCIDENT] Lane {lane} closed at step {self.step_count}")
-            except Exception:
-                pass
+        if self.backend == "SUMO":
+            if self._controlled_lanes:
+                lane = self._controlled_lanes[0]
+                try:
+                    traci.lane.setMaxSpeed(lane, 0.5)
+                    traci.lane.setDisallowed(lane, ["passenger", "bus"])
+                except Exception:
+                    pass
         self._accident_done = True
 
     def _get_obs(self) -> np.ndarray:
-        if self.use_cv:
-            return self._get_obs_from_cv()
-            
-        counts, waits = [], []
-        for lane in self._controlled_lanes:
-            counts.append(traci.lane.getLastStepVehicleNumber(lane) / 20.0)
-            waits.append(traci.lane.getWaitingTime(lane) / 300.0)
-        obs = np.array(counts + waits, dtype=np.float32)
-        return np.clip(obs, 0.0, 1.0)
+        if self.backend == "Python Simulator":
+            # 4 lane queues normalized + 4 saturation + 4 padding
+            return np.concatenate([
+                self._python_queues / 20.0,
+                np.clip(self._python_queues / 50.0, 0, 1),
+                np.zeros(max(0, self._num_lanes * 2 - 8), dtype=np.float32)
+            ]).astype(np.float32)[:self._num_lanes * 2]
 
-    def _get_obs_from_cv(self) -> np.ndarray:
-        """
-        Alternative to _get_obs() — uses internal CV pipeline by rendering
-        a synthetic frame from TraCI data.
-        """
-        # 1. Collect current vehicle positions from TraCI
-        vehicles = []
-        for vid in traci.vehicle.getIDList():
-            x, y = traci.vehicle.getPosition(vid)
-            type_id = traci.vehicle.getTypeID(vid)
-            vehicles.append({"x": x, "y": y, "type": type_id})
+        if self.use_cv and self.cv_pipeline is not None:
+            # Grab frame from virtual camera and run CV
+            frame = render_topdown_frame(self.junction_id)
+            counts = self.cv_pipeline.process_frame(frame)
+            # Build same shape as TraCI obs: [counts..., waits...]
+            lanes = list(counts.keys())
+            count_vec = [counts.get(l, 0) / 20.0 for l in lanes]
+            # Waits still come from TraCI (CV can't measure these)
+            wait_vec = [traci.lane.getWaitingTime(l) / 300.0 for l in self._controlled_lanes]
+            obs = count_vec + wait_vec[:len(count_vec)]
+            return np.clip(np.array(obs, dtype=np.float32), 0.0, 1.0)
 
-        # 2. Render synthetic top-down frame
-        frame = render_topdown_frame(vehicles, self._world_bounds, (640, 480))
-
-        # 3. Process frame through CV pipeline
-        counts = self.cv_pipeline.process_frame(frame)
-
-        # 4. Map to observation space (N/S/E/W -> first 4 lanes)
-        lanes = list(self._controlled_lanes)
-        cv_lanes = ["N", "S", "E", "W"]
-        norm_counts = []
-        for i in range(len(lanes)):
-            cv_key = cv_lanes[i % 4]
-            norm_counts.append(counts.get(cv_key, 0) / 20.0)
-
-        # 5. Approximate waiting time (CV doesn't give this directly in one-shot)
-        # Using heuristic: queue size * 5 seconds normalized by 300s
-        waits = [c * 5.0 / 300.0 for c in norm_counts]
-        
-        obs = np.array(norm_counts + waits, dtype=np.float32)
-        return np.clip(obs, 0.0, 1.0)
+        # Original TraCI path
+        counts = [traci.lane.getLastStepVehicleNumber(l) / 20.0 for l in self._controlled_lanes]
+        waits  = [traci.lane.getWaitingTime(l) / 300.0 for l in self._controlled_lanes]
+        return np.clip(np.array(counts + waits, dtype=np.float32), 0.0, 1.0)
 
     def _get_reward(self) -> float:
+        if self.backend == "Python Simulator":
+            if self.reward_type == "throughput":
+                return float(self._last_served)
+            return -float(np.sum(self._python_queues)) / 20.0
+
         if self.reward_type == "throughput":
-            # Reward vehicles reaching destination in the last step
             return float(traci.simulation.getArrivedNumber())
         
-        # Default: "wait_time" (minimize waiting time)
         total_wait = sum(
             traci.lane.getWaitingTime(lane)
             for lane in self._controlled_lanes
@@ -239,37 +211,48 @@ class SumoTrafficEnv(gym.Env):
         return -total_wait / 1000.0
 
     def _get_co2(self) -> float:
-        """Total CO₂ (mg) emitted by all vehicles this step."""
+        if self.backend == "Python Simulator":
+            return float(np.sum(self._python_queues)) * 120.0
         total = 0.0
         try:
             for vid in traci.vehicle.getIDList():
                 total += traci.vehicle.getCO2Emission(vid)
         except Exception:
             pass
-        return total  # mg per simulation step
-
-    def _get_junction_positions(self) -> list[tuple]:
-        """Return [(lat, lon, tl_id), …] for all traffic lights in the network."""
-        positions = []
-        try:
-            for tl_id in traci.trafficlight.getIDList():
-                # Get controlled lanes to find a junction node position
-                lanes = traci.trafficlight.getControlledLanes(tl_id)
-                if lanes:
-                    x, y = traci.lane.getShape(lanes[0])[0]
-                    lon, lat = traci.simulation.convertGeo(x, y)
-                    positions.append((lat, lon, tl_id))
-        except Exception:
-            pass
-        return positions
+        return total
 
     def _get_info(self) -> dict:
+        if self.backend == "Python Simulator":
+            # Mock vehicles for the map
+            vehicles = []
+            for i in range(int(np.sum(self._python_queues))):
+                vehicles.append({
+                    "id": f"v_{i}",
+                    "lat": 12.8700 + (np.random.rand() - 0.5) * 0.005,
+                    "lng": 74.8436 + (np.random.rand() - 0.5) * 0.005,
+                    "speed": 10.5,
+                    "type": "passenger"
+                })
+            
+            info = {
+                "step":           self.step_count,
+                "junction_id":    "virtual_1",
+                "lane_counts":    {f"lane_{i}": int(q) for i, q in enumerate(self._python_queues)},
+                "total_queue":    float(np.sum(self._python_queues)),
+                "current_phase":  0,
+                "phase_name":     "Python Adaptive",
+                "total_vehicles": int(np.sum(self._python_queues) + self._last_served),
+                "vehicles":       vehicles,
+                "co2_mg":         self._get_co2(),
+                "congestion":     "free" if np.sum(self._python_queues) < 5 else ("moderate" if np.sum(self._python_queues) < 12 else "high"),
+            }
+            return info
+
         counts = {
             lane: traci.lane.getLastStepVehicleNumber(lane)
             for lane in self._controlled_lanes
         }
         
-        # Get vehicle locations for the map overlay
         vehicles = []
         try:
             for vid in traci.vehicle.getIDList():
@@ -285,7 +268,6 @@ class SumoTrafficEnv(gym.Env):
         except Exception:
             pass
 
-        # Get phase name for the action log
         try:
             logic = traci.trafficlight.getAllProgramLogics(self.junction_id)[0]
             phase_idx = traci.trafficlight.getPhase(self.junction_id)
@@ -293,10 +275,12 @@ class SumoTrafficEnv(gym.Env):
         except Exception:
             phase_name = f"Phase {traci.trafficlight.getPhase(self.junction_id)}"
 
+        total_q = sum(counts.values())
         info = {
             "step":           self.step_count,
             "junction_id":    self.junction_id,
             "lane_counts":    counts,
+            "total_queue":    float(total_q),
             "current_phase":  traci.trafficlight.getPhase(self.junction_id),
             "phase_name":     phase_name,
             "total_vehicles": traci.simulation.getMinExpectedNumber(),
@@ -304,49 +288,88 @@ class SumoTrafficEnv(gym.Env):
             "co2_mg":         self._get_co2(),
             "scenario":       self.scenario.name if self.scenario else "Normal",
             "accident_active": self._accident_done,
+            "congestion":     "free" if total_q < 5 else ("moderate" if total_q < 12 else "high"),
         }
         return info
 
-    # ── Gymnasium API ──────────────────────────────────────────────────────────
+    def _check_emergency_preempt(self):
+        """Force green for the lane with an approaching emergency vehicle."""
+        for veh_id in traci.vehicle.getIDList():
+            if traci.vehicle.getTypeID(veh_id) == "emergency":
+                lane = traci.vehicle.getLaneID(veh_id)
+                if lane in self._controlled_lanes:
+                    lane_idx = self._controlled_lanes.index(lane)
+                    # Set phase that gives green to this lane index
+                    emergency_phase = lane_idx % self._num_phases
+                    traci.trafficlight.setPhase(self.junction_id, emergency_phase)
+                    return True
+        return False
+
+    def _add_pedestrian_phase(self):
+        """Inject an all-red pedestrian clearance phase programmatically."""
+        if self.backend != "SUMO": return
+        try:
+            logic = traci.trafficlight.getAllProgramLogics(self.junction_id)[0]
+            # Create an all-red state (e.g., "rrrrrrrr")
+            num_signals = len(logic.phases[0].state)
+            red_state = "r" * num_signals
+            new_phase = traci.trafficlight.Phase(duration=10, state=red_state, name="Pedestrian Crossing")
+            
+            phases = list(logic.phases)
+            phases.append(new_phase)
+            logic.phases = tuple(phases)
+            
+            traci.trafficlight.setProgramLogic(self.junction_id, logic)
+            self._num_phases = len(phases)
+            self.action_space = spaces.Discrete(self._num_phases)
+            print(f"[INFO] Injected Pedestrian Phase into {self.junction_id}")
+        except Exception as e:
+            print(f"[ERROR] Failed to inject pedestrian phase: {e}")
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.step_count = 0
-        self._start_sumo()
-        for _ in range(10):                  # warm-up
-            traci.simulationStep()
+        if self.backend == "SUMO":
+            self._start_sumo()
+            for _ in range(10): traci.simulationStep()
+        else:
+            self._python_queues = np.zeros(4, dtype=float)
+            self._last_served = 0.0
         return self._get_obs(), self._get_info()
 
     def step(self, action: int):
-        # Trigger accident if configured
-        if (self.scenario is not None and
-                self.scenario.accident_step is not None and
-                self.step_count == self.scenario.accident_step and
-                not self._accident_done):
-            self._apply_accident()
-
-        traci.trafficlight.setPhase(self.junction_id, int(action))
-
-        for _ in range(5):
-            traci.simulationStep()
-
-        self.step_count += 1
-        obs     = self._get_obs()
-        reward  = self._get_reward()
-        info    = self._get_info()
-
-        terminated = (
-            self.step_count >= self.max_steps // 5
-            or traci.simulation.getMinExpectedNumber() == 0
-        )
-        return obs, reward, terminated, False, info
+        if self.backend == "SUMO":
+            preempted = self._check_emergency_preempt()
+            if not preempted:
+                traci.trafficlight.setPhase(self.junction_id, int(action))
+            for _ in range(5):
+                traci.simulationStep()
+            self.step_count += 1
+            return self._get_obs(), self._get_reward(), self.step_count >= self.max_steps // 5 or traci.simulation.getMinExpectedNumber() == 0, False, self._get_info()
+        else:
+            # Python Stochastic Step
+            demand_multiplier = self.scenario.demand_multiplier if self.scenario else 1.0
+            split = np.array([0.30, 0.25, 0.25, 0.20])
+            arrivals = np.random.poisson(demand_multiplier * split * 2.0)
+            self._python_queues += arrivals
+            
+            service = np.zeros(4)
+            if action in [0, 1]:
+                service[0] = 2.5 if action == 0 else 0.3
+                service[1] = 2.5 if action == 0 else 0.3
+            else:
+                service[2] = 2.5 if action == 2 else 0.3
+                service[3] = 2.5 if action == 2 else 0.3
+            
+            served = np.minimum(self._python_queues, service)
+            self._python_queues = np.maximum(0.0, self._python_queues - served)
+            self._last_served = float(np.sum(served))
+            
+            self.step_count += 1
+            return self._get_obs(), self._get_reward(), self.step_count >= self.max_steps, False, self._get_info()
 
     def get_junction_map_data(self) -> list[tuple]:
-        """
-        Expose all TL positions + current congestion for the map overlay.
-        Call this between steps (SUMO must be running).
-        Returns list of (lat, lon, tl_id, congestion_label)
-        """
+        if self.backend != "SUMO": return []
         result = []
         try:
             for tl_id in traci.trafficlight.getIDList():
@@ -357,12 +380,11 @@ class SumoTrafficEnv(gym.Env):
                 queue = sum(traci.lane.getLastStepVehicleNumber(l) for l in set(lanes))
                 cong = "free" if queue < 5 else ("moderate" if queue < 12 else "high")
                 result.append((lat, lon, tl_id, cong))
-        except Exception:
-            pass
+        except Exception: pass
         return result
 
     def render(self):
-        pass   # SUMO-GUI handles rendering when use_gui=True
+        pass
 
     def close(self):
         if self._sumo_running:

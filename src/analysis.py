@@ -273,3 +273,35 @@ def parse_sb3_training_log(log_lines: list[str]) -> pd.DataFrame:
             ts = rew = ep_len = None
 
     return pd.DataFrame(records)
+
+
+def get_los_grade(avg_delay_seconds: float) -> str:
+    """Highway Capacity Manual Level of Service grades."""
+    if avg_delay_seconds <= 10:  return "A"
+    if avg_delay_seconds <= 20:  return "B"
+    if avg_delay_seconds <= 35:  return "C"
+    if avg_delay_seconds <= 55:  return "D"
+    if avg_delay_seconds <= 80:  return "E"
+    return "F"
+
+
+def cv_vs_traci_ablation(config_path="simulation/config.sumocfg", n_steps=200):
+    """Compare queue length readings: CV pipeline vs TraCI ground truth."""
+    from src.controller import SumoTrafficEnv
+    import pandas as pd
+
+    results = []
+    for use_cv in [False, True]:
+        env = SumoTrafficEnv(config_path=config_path, use_cv=use_cv, max_steps=n_steps*5)
+        obs, _ = env.reset()
+        queues = []
+        for _ in range(n_steps):
+            obs, _, term, trunc, info = env.step(env.action_space.sample())
+            queues.append(info["total_queue"])
+            if term or trunc:
+                break
+        env.close()
+        results.append({"source": "CV" if use_cv else "TraCI", 
+                         "mean_queue": float(np.mean(queues)),
+                         "std_queue": float(np.std(queues))})
+    return pd.DataFrame(results)

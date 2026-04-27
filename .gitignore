@@ -1,125 +1,61 @@
-# =============================================================================
 # Mangalore Traffic AI — .gitignore
-# =============================================================================
 
-
-# ── Python ────────────────────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
 *$py.class
-*.egg-info/
-dist/
-build/
-.eggs/
-*.spec
-
-
-# ── Testing / Coverage ────────────────────────────────────────────────────────
-.pytest_cache/
-htmlcov/
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
 .coverage
-.coverage.*
+.cache
+nosetests.xml
 coverage.xml
 *.cover
-
-
-# ── Virtual Environments ──────────────────────────────────────────────────────
-.venv/
-venv/
-env/
-ENV/
-
-
-# ── Trained Model Binaries ────────────────────────────────────────────────────
-# These are large files that should be regenerated from training scripts.
-models/*.zip          # Stable Baselines3 PPO / DQN checkpoints
-models/*.pkl          # Scikit-learn Random Forest + Label Encoder
-models/*.pt           # PyTorch LSTM / GCN-LSTM weights
-models/*.h5           # Keras / TF model weights (if added later)
-models/*.onnx         # ONNX exported models
-
-
-# ── Optimisation Studies (Optuna) ─────────────────────────────────────────────
-optuna_study.db
-optuna_study.db-journal
-
-
-# ── SUMO Simulation Artefacts ─────────────────────────────────────────────────
-# Regenerate these by running: python simulation/generate_network.py
-simulation/output/         # SUMO runtime output (summary.xml, tripinfo.xml, etc.)
-simulation/*.osm           # Raw OpenStreetMap XML download  (~1.5 MB)
-simulation/*.net.xml       # SUMO road network file          (~11 MB)
-simulation/*.rou.xml       # Generated vehicle route files
-simulation/trips.xml       # Random-trip source file
-simulation/uploaded_network.osm   # User-uploaded custom map (Data Hub)
-simulation/uploaded_trips.xml     # User-uploaded custom trips
-
-
-# ── Logs / TensorBoard ────────────────────────────────────────────────────────
-logs/
-runs/
-tensorboard/
 *.log
-training_log_*.txt
+.pytest_cache/
 
+# Model weights & large binaries
+models/*.zip
+models/*.pkl
+models/*.pt
+models/*.h5
+models/*.onnx
 
-# ── Database & Exports ────────────────────────────────────────────────────────
-simulation_history.db      # SQLite history database (regenerated at runtime)
+# Data & Database
+simulation_history.db
 simulation_history.db-shm
 simulation_history.db-wal
-reports/                   # Auto-generated HTML/PDF reports
-mangalore_traffic_*.html   # Exported dashboard reports
+optuna_study.db
+*.graphml
+cache/
+
+# SUMO Artefacts
+simulation/output/
+simulation/*.osm
+simulation/*.net.xml
+simulation/*.rou.xml
+simulation/trips.xml
+
+# Reports
+reports/
+mangalore_traffic_*.html
 mangalore_traffic_*.pdf
 
-
-# ── Data Hub Uploads ──────────────────────────────────────────────────────────
-uploads/                   # Any user-uploaded files
-*.uploaded.csv
-*.uploaded.osm
-*.uploaded.xml
-
-
-# ── osmnx / networkx Cache ───────────────────────────────────────────────────
-cache/
-*.graphml
-
-
-# ── Environment Variables ─────────────────────────────────────────────────────
-# Keep .env.example in the repo. NEVER commit .env (it contains secrets).
+# Environment Variables
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 !.env.example
 
-
-# ── Streamlit Runtime ─────────────────────────────────────────────────────────
-.streamlit/
-
-
-# ── OS Junk ──────────────────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-desktop.ini
-*.swp
-*.swo
-*.tmp
-*~
-
-
-# ── IDE / Editor ─────────────────────────────────────────────────────────────
-.vscode/
-.idea/
-*.iml
-*.suo
-*.user
-.history/
-
-
-# ── Jupyter Notebooks ─────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-*.ipynb
-
-
-# ── Frontend & Node.js (Dashboard V2) ────────────────────────────────────────
+# Frontend (Dashboard V2)
 node_modules/
 .next/
 out/
@@ -128,8 +64,11 @@ build/
 *.tsbuildinfo
 package-lock.json
 
-# Local env files
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini

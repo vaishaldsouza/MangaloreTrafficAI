@@ -5437,4 +5437,9 @@
     <vehicle id="1799" depart="3598.00">
         <route edges="1278476804 1230261701#0 1230261701#1-AddedOnRampEdge 1230261701#1 26205021#1 156015648#4 156015635#0 156015635#1 156015635#2 27191060#0 27191060#1 27191060#2 1047458866#1 1047458859#0 1047458864 1047458860 -1041930114 -232973375#6 -232973375#5 -232973375#4 -232973375#3 -232973375#2 1041930116#0 -1385715601"/>
     </vehicle>
+    <vType id="emergency" vClass="emergency" color="1,0,0" maxSpeed="22" accel="2.5" decel="5.0"/>
+
+    <vehicle id="emv_0" type="emergency" depart="300" departLane="best" departSpeed="max">
+        <route edges="-1006861078#0 -1041910270"/>
+    </vehicle>
 </routes>

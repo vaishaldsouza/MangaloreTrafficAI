@@ -5,12 +5,13 @@ import { motion } from "framer-motion";
 import { TrafficCone, Lock, User, ArrowRight, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function LoginPage() {
+  const { login } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({ username: "", password: "" });
   const [errorMsg, setErrorMsg] = useState("");
-  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,24 +19,9 @@ export default function LoginPage() {
     setErrorMsg("");
 
     try {
-      const formDataBody = new URLSearchParams();
-      formDataBody.append("username", formData.username);
-      formDataBody.append("password", formData.password);
-
-      const res = await fetch("http://localhost:8000/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formDataBody
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Invalid login");
-
-      localStorage.setItem("token", data.access_token);
-      localStorage.setItem("user", formData.username);
-      router.push("/");
+      await login(formData.username, formData.password);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg("Invalid username or password");
     } finally {
       setIsLoading(false);
     }

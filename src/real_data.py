@@ -1,12 +1,26 @@
-"""
-src/real_data.py — Real data ingestion and normalization pipeline.
-"""
 import pandas as pd
+import numpy as np
 
 from models.random_forest_model import build_features, train_random_forest
 
 
 REQUIRED_COLS = {"hour", "vehicle_count", "is_weekend"}
+
+
+def load_field_survey(csv_path: str):
+    """
+    Expects CSV columns: timestamp, lane_id, vehicle_count, wait_time
+    Returns X (features) and y (congestion label) for RF/LSTM training.
+    """
+    df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+    df["hour"]       = df["timestamp"].dt.hour
+    df["is_weekend"] = df["timestamp"].dt.dayofweek >= 5
+    # Congestion label based on threshold
+    df["congested"]  = (df["vehicle_count"] > 15).astype(int)
+
+    X = df[["hour", "is_weekend", "vehicle_count", "wait_time"]].values.astype(np.float32)
+    y = df["congested"].values
+    return X, y
 
 
 def normalize_real_traffic_data(df: pd.DataFrame) -> pd.DataFrame:

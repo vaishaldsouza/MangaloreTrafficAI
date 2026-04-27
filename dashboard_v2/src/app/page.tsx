@@ -8,7 +8,8 @@ import ModelIntelligence from "@/components/ModelIntelligence";
 import EnvironmentalTracking from "@/components/EnvironmentalTracking";
 import AutomaticBenchmarking from "@/components/AutomaticBenchmarking";
 import RouteFinder from "@/components/RouteFinder";
-import { useSimulation } from "@/hooks/useSimulation";
+import { useSimulation, SimStep } from "@/hooks/useSimulation";
+import LiveMetricsChart from "@/components/LiveMetricsChart";
 import { useAuth } from "@/hooks/useAuth";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
@@ -29,7 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export default function Home() {
-  const { data, status, startSimulation, stopSimulation } = useSimulation();
+  const { latest, history, los, status, startSimulation, stopSimulation } = useSimulation();
   const { isAuthenticated, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
   
@@ -38,7 +39,10 @@ export default function Home() {
     scenario: "Normal",
     steps: 200,
     backend: "Python Simulator",
-    reward_type: "wait_time"
+    reward_type: "wait_time",
+    showGui: false,
+    use_cv: false,
+    n_junctions: 1
   });
 
   const controllers = [
@@ -120,7 +124,7 @@ export default function Home() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <MetricCard 
             title="Current Queue" 
-            value={data?.total_queue.toFixed(1) || "0.0"} 
+            value={latest?.total_queue.toFixed(1) || "0.0"} 
             unit="vehicles" 
             change={status === "running" ? "Live Data" : "--"} 
             icon={Car} 
@@ -128,7 +132,7 @@ export default function Home() {
           />
           <MetricCard 
             title="Reward Signal" 
-            value={data?.reward.toFixed(3) || "0.000"} 
+            value={latest?.reward.toFixed(3) || "0.000"} 
             unit="pts" 
             change={status === "running" ? "Live Feedback" : "--"} 
             icon={TrendingUp} 
@@ -136,7 +140,7 @@ export default function Home() {
           />
           <MetricCard 
             title="Simulation Step" 
-            value={data?.step.toString() || "0"} 
+            value={latest?.step.toString() || "0"} 
             unit={`/ ${simConfig.steps}`} 
             change={status === "running" ? "Processing" : "--"} 
             icon={Activity} 
@@ -144,12 +148,53 @@ export default function Home() {
           />
           <MetricCard 
             title="Traffic State" 
-            value={data?.congestion.toUpperCase() || "IDLE"} 
+            value={latest?.congestion.toUpperCase() || "IDLE"} 
             unit="" 
             change={status === "running" ? "Continuous Monitoring" : "--"} 
             icon={Layers} 
             color="orange"
           />
+        </div>
+
+        {/* Live Visualizations & LoS */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <div className="lg:col-span-3 glass-card p-6 rounded-3xl border border-white/[0.08]">
+             <div className="flex items-center justify-between mb-4">
+                <h4 className="text-sm font-bold text-white uppercase tracking-wider">Live Queue Metric</h4>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">Level of Service</span>
+                  <span className={`text-2xl font-black ${
+                    los === "A" || los === "B" ? "text-emerald-400" :
+                    los === "C" || los === "D" ? "text-yellow-400" : "text-red-400"
+                  }`}>{los}</span>
+                </div>
+             </div>
+             <LiveMetricsChart history={history} />
+          </div>
+
+          <div className="glass-card p-6 rounded-3xl border border-white/[0.08] flex flex-col justify-center gap-4">
+             {latest ? (
+                <>
+                  <div className="bg-slate-800/50 rounded-2xl p-4 border border-white/5">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Current Reward</p>
+                    <p className="text-2xl font-black text-white">{latest.reward.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-slate-800/50 rounded-2xl p-4 border border-white/5">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">CO₂ Emissions</p>
+                    <p className="text-2xl font-black text-white">{latest.co2_mg.toFixed(0)} <span className="text-xs text-slate-500 font-normal">mg</span></p>
+                  </div>
+                  <div className="bg-slate-800/50 rounded-2xl p-4 border border-white/5">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Active Phase</p>
+                    <p className="text-sm font-bold text-blue-400">{latest.phase_name}</p>
+                  </div>
+                </>
+             ) : (
+                <div className="text-center py-10">
+                   <Activity className="w-8 h-8 text-slate-700 mx-auto mb-3" />
+                   <p className="text-xs text-slate-500">Awaiting stream...</p>
+                </div>
+             )}
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -209,7 +254,7 @@ export default function Home() {
                 <MapView 
                   center={mapCenter} 
                   zoom={16} 
-                  vehicles={data?.vehicles || []} 
+                  vehicles={latest?.vehicles || []} 
                 />
               </div>
 
@@ -231,24 +276,60 @@ export default function Home() {
                       >
                         {controllers.map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
-                    </ParamGroup>
+                      <div className="pt-2">
+                        <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-3 block">Simulation Backend</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {["Python Simulator", "SUMO"].map(b => (
+                            <button 
+                              key={b}
+                              onClick={() => setSimConfig({...simConfig, backend: b})}
+                              className={cn(
+                                "py-2 rounded-xl text-[10px] font-bold border transition-all",
+                                simConfig.backend === b ? "bg-blue-600/10 border-blue-600 text-blue-400" : "bg-white/5 border-white/10 text-slate-500 hover:border-white/20"
+                              )}
+                            >
+                              {b}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
 
-                    <ParamGroup label="Simulation Backend">
-                      <div className="grid grid-cols-2 gap-3">
-                        {backends.map(b => (
-                          <button
-                            key={b}
-                            onClick={() => setSimConfig({...simConfig, backend: b})}
-                            className={cn(
-                              "px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all",
-                              simConfig.backend === b 
-                                ? "bg-blue-500/10 border-blue-500/30 text-blue-400" 
-                                : "bg-white/5 border-transparent text-slate-500 hover:bg-white/10"
-                            )}
-                          >
-                            {b}
-                          </button>
-                        ))}
+                      {simConfig.backend === "SUMO" && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10">
+                             <span className="text-[10px] text-slate-400 font-bold uppercase">Show Native GUI</span>
+                             <input 
+                               type="checkbox" 
+                               checked={simConfig.showGui}
+                               onChange={(e) => setSimConfig({...simConfig, showGui: e.target.checked})}
+                               className="accent-blue-600 w-4 h-4 cursor-pointer"
+                             />
+                          </div>
+                          <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10">
+                             <span className="text-[10px] text-slate-400 font-bold uppercase">Use CV Pipeline</span>
+                             <input 
+                               type="checkbox" 
+                               checked={simConfig.use_cv}
+                               onChange={(e) => setSimConfig({...simConfig, use_cv: e.target.checked})}
+                               className="accent-blue-600 w-4 h-4 cursor-pointer"
+                             />
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="pt-2">
+                         <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-3 block flex justify-between">
+                            <span>Multi-Junction Scale</span>
+                            <span className="text-blue-400">{simConfig.n_junctions} Nodes</span>
+                         </label>
+                         <input 
+                           type="range" 
+                           min="1" 
+                           max="3" 
+                           value={simConfig.n_junctions}
+                           onChange={(e) => setSimConfig({...simConfig, n_junctions: parseInt(e.target.value)})}
+                           className="w-full accent-blue-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
+                         />
                       </div>
                     </ParamGroup>
 
@@ -307,7 +388,7 @@ export default function Home() {
               exit={{ opacity: 0, y: -20 }}
               className="h-[650px]"
             >
-              <AIDecisionLogs currentData={data} status={status} />
+              <AIDecisionLogs currentData={latest} status={status} />
             </motion.div>
           )}
 
@@ -331,7 +412,7 @@ export default function Home() {
               exit={{ opacity: 0, y: -20 }}
               className="h-[650px]"
             >
-              <EnvironmentalTracking currentData={data} status={status} />
+              <EnvironmentalTracking currentData={latest} status={status} />
             </motion.div>
           )}
 

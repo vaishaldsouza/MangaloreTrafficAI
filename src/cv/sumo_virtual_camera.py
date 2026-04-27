@@ -63,24 +63,34 @@ def parse_fcd_output(fcd_xml_path: str) -> dict[float, list[dict]]:
 # ── Synthetic frame rendering ─────────────────────────────────────────────────
 
 def render_topdown_frame(
-    vehicles: list[dict],
-    world_bounds: tuple[float, float, float, float],
+    junction_id_or_vehicles,
+    world_bounds: tuple[float, float, float, float] = None,
     frame_size: tuple[int, int] = (640, 480),
 ) -> np.ndarray:
     """
-    Render a synthetic top-down camera frame from SUMO vehicle positions.
-
-    Vehicles are drawn as coloured circles on a dark road background.
-    Used to test the CV pipeline without a real camera feed.
-
+    Render a synthetic top-down camera frame.
+    
     Args:
-        vehicles     : List of vehicle dicts from parse_fcd_output().
-        world_bounds : (min_x, min_y, max_x, max_y) in SUMO network coordinates.
-        frame_size   : Output frame dimensions (width, height).
-
-    Returns:
-        BGR numpy array of shape (height, width, 3).
+        junction_id_or_vehicles: Either a list of vehicle dicts or a SUMO junction ID string.
+        world_bounds : (min_x, min_y, max_x, max_y). If None and junction_id provided, tries to derive.
+        frame_size   : (width, height).
     """
+    import traci
+    
+    if isinstance(junction_id_or_vehicles, str):
+        # Fetch vehicles from TraCI
+        vehicles = []
+        for vid in traci.vehicle.getIDList():
+            x, y = traci.vehicle.getPosition(vid)
+            vehicles.append({"x": x, "y": y, "type": traci.vehicle.getTypeID(vid)})
+        
+        if world_bounds is None:
+            # Fallback/default bounds if not provided
+            x, y = traci.junction.getPosition(junction_id_or_vehicles)
+            padding = 100
+            world_bounds = (x - padding, y - padding, x + padding, y + padding)
+    else:
+        vehicles = junction_id_or_vehicles
     W, H = frame_size
     x_min, y_min, x_max, y_max = world_bounds
 
@@ -130,18 +140,28 @@ def get_world_bounds_from_net(net_xml_path: str) -> tuple[float, float, float, f
     return x1, y1, x2, y2
 
 
-def get_junction_bounds(net_xml_path: str, junction_id: str, padding: float = 150.0) -> tuple[float, float, float, float]:
+def get_junction_bounds(net_xml_path_or_junction_id: str, junction_id: str = None, padding: float = 150.0) -> tuple[float, float, float, float]:
     """
     Extract coordinate bounds centered on a specific junction.
     
     Args:
-        net_xml_path : Path to .net.xml.
-        junction_id  : SUMO junction ID.
+        net_xml_path_or_junction_id: Path to .net.xml OR junction ID (if traci active).
+        junction_id  : SUMO junction ID (if first arg is path).
         padding      : Meters to show around the center.
-        
-    Returns:
-        (min_x, min_y, max_x, max_y)
     """
+    import traci
+    
+    if junction_id is None:
+        # Assume first arg is junction_id and traci is active
+        jid = net_xml_path_or_junction_id
+        try:
+            x, y = traci.junction.getPosition(jid)
+            return (x - padding, y - padding, x + padding, y + padding)
+        except Exception:
+            # If traci fails, we can't do much without the XML
+            return (0, 0, 1000, 1000)
+
+    net_xml_path = net_xml_path_or_junction_id
     tree = ET.parse(net_xml_path)
     root = tree.getroot()
     

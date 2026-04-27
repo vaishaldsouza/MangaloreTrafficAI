@@ -681,7 +681,7 @@ def run_python_simulation(method, max_steps, reward_type="wait_time", dataset_df
 
 
 def run_sumo_simulation(method, max_steps, use_gui, scenario=None, reward_type="wait_time",
-                        live_map_ph=None, live_metrics=None, progress_ph=None):
+                        live_map_ph=None, live_metrics=None, progress_ph=None, use_cv=False):
     """Run one SUMO-backed episode. Returns (df, pos_frames, junction_data_last)."""
     from controller import SumoTrafficEnv
     import traci
@@ -699,7 +699,8 @@ def run_sumo_simulation(method, max_steps, use_gui, scenario=None, reward_type="
 
     env = SumoTrafficEnv(config_path="simulation/config.sumocfg",
                          use_gui=use_gui, max_steps=max_steps*5,
-                         scenario=scenario, reward_type=reward_type)
+                         scenario=scenario, reward_type=reward_type,
+                         use_cv=use_cv)
     obs, _ = env.reset()
     history, lstm_hist, pos_frames = [], [], []
     junction_data_last = []
@@ -774,7 +775,7 @@ def run_sumo_simulation(method, max_steps, use_gui, scenario=None, reward_type="
 
 def run_simulation(method, max_steps, use_gui, scenario=None, reward_type="wait_time",
                    live_map_ph=None, live_metrics=None, progress_ph=None,
-                   backend="Python Simulator", dataset_df=None):
+                   backend="Python Simulator", dataset_df=None, use_cv=False):
     if backend == "Python Simulator":
         return run_python_simulation(
             method=method,
@@ -793,6 +794,7 @@ def run_simulation(method, max_steps, use_gui, scenario=None, reward_type="wait_
         live_map_ph=live_map_ph,
         live_metrics=live_metrics,
         progress_ph=progress_ph,
+        use_cv=use_cv,
     )
 
 # ── page header ───────────────────────────────────────────────────────────────
@@ -886,6 +888,9 @@ with tab_sim:
     with sc3:
         max_steps = st.slider("⏱️ Steps (1 step=5 s)", 50, 720, 200, 10)
         use_gui   = st.checkbox("📺 SUMO-GUI", disabled=(sim_backend != "SUMO"))
+        use_cv = st.checkbox("📷 Use CV Pipeline", 
+                             disabled=(sim_backend != "SUMO"),
+                             help="Use computer vision instead of TraCI for vehicle counts")
         reward_type = st.selectbox("🎯 Reward Type", ["wait_time", "throughput"], 
                                    help="wait_time: minimize queue length. throughput: maximize arrived vehicles.")
     with sc4:
@@ -928,6 +933,7 @@ with tab_sim:
             live_map_ph=map_ph, live_metrics=ph, progress_ph=prog_ph,
             backend=sim_backend,
             dataset_df=st.session_state.dataset_df,
+            use_cv=use_cv,
         )
         st.session_state.sim_df     = df
         st.session_state.sim_pos    = pos
@@ -950,12 +956,17 @@ with tab_sim:
         st.success(f"✅ Done! Saved as **Run #{run_id}**. Check 📊 Results in the 🗓️ History tab.")
 
         # quick metrics
-        mc2 = st.columns(5)
+        mc2 = st.columns(6)
         mc2[0].metric("Steps", len(df))
         mc2[1].metric("Avg reward", f"{df['reward'].mean():.4f}")
         mc2[2].metric("Avg queue", f"{df['total_queue'].mean():.1f}")
         mc2[3].metric("Peak queue", f"{df['total_queue'].max():.0f}")
         mc2[4].metric("High-cong %", f"{(df['congestion']=='high').mean()*100:.1f}%")
+        
+        from src.analysis import get_los_grade
+        avg_delay = df["total_queue"].mean() * 5
+        los = get_los_grade(avg_delay)
+        mc2[5].metric("Level of Service", los, help="HCM grades A (best) → F (worst)")
 
         lane_cols = [c for c in df.columns if c.startswith("lane_")]
         c1,c2 = st.columns(2)
@@ -1483,6 +1494,32 @@ with tab_research:
                         st.success("Random Forest trained on uploaded real data and saved to `models/random_forest.pkl`.")
                     except Exception as e:
                         st.error(f"Real-data training failed: {e}")
+                
+                if st.button("Train LSTM on uploaded real data", key="real_lstm_train"):
+                    try:
+                        from src.models.lstm_model import TrafficLSTM, make_sequences
+                        from src.real_data import normalize_real_traffic_data
+                        import torch, torch.nn as nn
+                        from torch.utils.data import DataLoader, TensorDataset
+
+                        norm_df = normalize_real_traffic_data(real_df)
+                        data = norm_df[["vehicle_count", "hour_sin", "hour_cos", "is_peak", "is_weekend", "is_rain"]].values.astype("float32")
+                        X, y = make_sequences(data, seq_len=12)
+                        ds = TensorDataset(torch.tensor(X), torch.tensor(y))
+                        loader = DataLoader(ds, batch_size=32, shuffle=True)
+
+                        model = TrafficLSTM(input_size=6, n_lanes=4)
+                        opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+                        for epoch in range(10):
+                            for xb, yb in loader:
+                                opt.zero_grad()
+                                nn.MSELoss()(model(xb), yb).backward()
+                                opt.step()
+                        os.makedirs("models", exist_ok=True)
+                        torch.save(model.state_dict(), "models/lstm_traffic.pt")
+                        st.success("LSTM trained and saved to models/lstm_traffic.pt")
+                    except Exception as e:
+                        st.error(f"LSTM training failed: {e}")
             else:
                 st.warning(f"Missing columns: {required - set(real_df.columns)}")
 
@@ -1534,8 +1571,14 @@ with tab_research:
             if st.button("Train cooperative MARL baseline", key="marl_run"):
                 try:
                     from multi_agent_rl import train_independent_ppo_agents
-                    meta = train_independent_ppo_agents(n_junctions=marl_n)
-                    st.dataframe(pd.DataFrame(meta), use_container_width=True)
+                    prog = st.progress(0, text="Training joint PPO on all junctions...")
+                    model = train_independent_ppo_agents(
+                        n_junctions=marl_n,
+                        total_timesteps=50_000,
+                    )
+                    prog.progress(100, text="Done!")
+                    st.success(f"Saved: models/marl_joint.zip")
+                    st.json({"junctions_controlled": marl_n, "timesteps": 50_000})
                 except Exception as e:
                     st.error(f"MARL training failed: {e}")
 
@@ -1816,9 +1859,23 @@ with tab_data:
                 with c1:
                     if st.button("🌲 Train Random Forest", key="tab_data_rf_train"):
                         with st.spinner("Training Random Forest…"):
-                            from real_data import train_rf_from_real_data
-                            train_rf_from_real_data(st.session_state.dataset_df)
-                            st.success("Model trained and saved to `models/random_forest.pkl`!")
+                            from real_data import load_field_survey
+                            from sklearn.ensemble import RandomForestClassifier
+                            import joblib
+                            
+                            # Save uploaded file to temp path for load_field_survey
+                            temp_path = "cache/uploaded_survey.csv"
+                            os.makedirs("cache", exist_ok=True)
+                            with open(temp_path, "wb") as f:
+                                f.write(csv_file.getbuffer())
+                                
+                            X, y = load_field_survey(temp_path)
+                            rf_clf = RandomForestClassifier(n_estimators=100, random_state=42)
+                            rf_clf.fit(X, y)
+                            
+                            os.makedirs("models", exist_ok=True)
+                            joblib.dump(rf_clf, "models/random_forest.pkl")
+                            st.success("Model trained successfully on field survey data and saved to `models/random_forest.pkl`!")
                     with c2:
                         if st.button("🔮 Train LSTM (Experimental)", key="tab_data_lstm_train"):
                             st.info("LSTM training on custom datasets coming soon.")

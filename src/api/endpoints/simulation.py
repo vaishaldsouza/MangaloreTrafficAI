@@ -16,6 +16,9 @@ router = APIRouter()
 logger = logging.getLogger("simulation")
 db = SimulationDB()
 
+# Add at top of file level
+active_sims: Dict[str, bool] = {}   # client_id -> should_run
+
 # Model Cache
 CACHE = {
     "rf": None,
@@ -54,8 +57,17 @@ class SimulationManager:
 
 manager = SimulationManager()
 
+from fastapi import WebSocket, WebSocketDisconnect, Query
+from src.api.auth import SECRET_KEY, ALGORITHM
+from jose import jwt, JWTError
+
 @router.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str):
+async def websocket_endpoint(websocket: WebSocket, client_id: str, token: str = Query(...)):
+    try:
+        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        await websocket.close(code=4001)
+        return
     await manager.connect(websocket, client_id)
     try:
         while True:
@@ -64,12 +76,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             
             if data.get("type") == "START":
                 config = data.get("config", {})
+                active_sims[client_id] = True
                 asyncio.create_task(run_sim_loop(client_id, config))
             elif data.get("type") == "STOP":
-                # Connection closing handles stop, but we could add more refined stop logic here
-                pass
+                active_sims[client_id] = False
                 
     except WebSocketDisconnect:
+        active_sims[client_id] = False
         manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
@@ -86,12 +99,22 @@ async def run_sim_loop(client_id: str, config: Dict[str, Any]):
     
     scenario = get_scenario(scenario_name)
     env = SumoTrafficEnv(
-        use_gui=False, 
+        use_gui=config.get("showGui", False), 
         scenario=scenario, 
         backend=backend,
         reward_type=reward_type,
-        max_steps=max_steps * 5
+        max_steps=max_steps * 5,
+        use_cv=config.get("use_cv", False),
     )
+    
+    # Handle multi-junction if applicable
+    if config.get("n_junctions", 1) > 1:
+        from multi_junction import MultiJunctionTrafficEnv
+        env = MultiJunctionTrafficEnv(
+            n_junctions=config.get("n_junctions", 1),
+            use_gui=config.get("showGui", False),
+            max_steps=max_steps * 5
+        )
     
     history = []
     lstm_hist = []
@@ -101,6 +124,8 @@ async def run_sim_loop(client_id: str, config: Dict[str, Any]):
         rl_model = CACHE["ppo"] if "PPO" in method else CACHE["dqn"]
         
         for step in range(max_steps):
+            if not active_sims.get(client_id, False):
+                break
             # 1. Decide action
             action = get_action(
                 method=method, 
