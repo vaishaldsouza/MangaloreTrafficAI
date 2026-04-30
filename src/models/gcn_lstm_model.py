@@ -95,6 +95,36 @@ class SpatialTemporalModel(nn.Module):
 # Graph builder
 # ---------------------------------------------------------------------------
 
+def build_graph_from_sumo_net(net_path: str = "simulation/mangalore.net.xml"):
+    """Build edge_index from SUMO .net.xml — no internet needed."""
+    import xml.etree.ElementTree as ET
+
+    if not os.path.exists(net_path):
+        print(f"[GCN] Error: {net_path} not found.")
+        return torch.empty((2, 0), dtype=torch.long), {}
+
+    tree = ET.parse(net_path)
+    root = tree.getroot()
+
+    # Collect junction IDs (skip internal :junctions)
+    junctions = [j.attrib["id"] for j in root.findall("junction")
+                 if not j.attrib["id"].startswith(":")]
+    node_idx = {jid: i for i, jid in enumerate(junctions)}
+
+    edges = []
+    for edge in root.findall("edge"):
+        if edge.attrib.get("id", "").startswith(":"):
+            continue
+        src = edge.attrib.get("from")
+        dst = edge.attrib.get("to")
+        if src in node_idx and dst in node_idx:
+            edges.append([node_idx[src], node_idx[dst]])
+
+    edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+    print(f"[GCN] {len(junctions)} junctions, {len(edges)} road edges")
+    return edge_index, node_idx
+
+
 def build_mangalore_graph(radius_m: int = 2000):
     """
     Build a PyTorch Geometric edge_index from the Mangalore OSM road graph.
@@ -135,42 +165,85 @@ def _make_synthetic_node_data(n_nodes: int, T: int = 50, n_feat: int = 4) -> tor
     return data
 
 
+def collect_sumo_node_features(node_idx: dict, step_data: list) -> torch.Tensor:
+    """
+    Convert simulation history rows into (T, N, 4) node feature tensor.
+    
+    step_data: list of dicts with keys junction_id, queue, wait, phase, vehicles
+    node_idx:  junction_id -> integer index
+    """
+    n_nodes = len(node_idx)
+    T = len(step_data)
+    x = torch.zeros(T, n_nodes, 4)
+
+    for t, row in enumerate(step_data):
+        for jid, idx in node_idx.items():
+            jdata = row.get(jid, {})
+            x[t, idx, 0] = jdata.get("queue",    0) / 20.0   # normalised
+            x[t, idx, 1] = jdata.get("wait",     0) / 300.0
+            x[t, idx, 2] = jdata.get("phase",    0) / 4.0
+            x[t, idx, 3] = jdata.get("vehicles", 0) / 50.0
+    return x
+
+
 # ---------------------------------------------------------------------------
 # Training demo
 # ---------------------------------------------------------------------------
 
-def train_gcn_lstm_demo(n_nodes: int = 20, T: int = 50, epochs: int = 30):
-    """
-    Minimal training loop for demonstration purposes.
-    In production, replace synthetic data with real SUMO junction states.
-    """
-    model = SpatialTemporalModel(node_features=4, hidden=64, lstm_hidden=128)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+def train_gcn_lstm(
+    net_path:   str = "simulation/mangalore.net.xml",
+    step_data:  list = None,   # from collect_sumo_node_features
+    epochs:     int  = 50,
+    seq_len:    int  = 12,     # 12 steps × 5s = 1 min lookback
+    lr:         float = 1e-3,
+):
+    edge_index, node_idx = build_graph_from_sumo_net(net_path)
+    n_nodes = len(node_idx)
+
+    if step_data is None:
+        print("[GCN] No step_data — using synthetic fallback")
+        x_all = _make_synthetic_node_data(n_nodes, T=200)
+    else:
+        x_all = collect_sumo_node_features(node_idx, step_data)  # (T, N, 4)
+
+    T = x_all.size(0)
+    model    = SpatialTemporalModel(node_features=4, hidden=64, lstm_hidden=128)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
 
-    # Dummy fully-connected graph for the demo
-    src = torch.arange(n_nodes).repeat_interleave(n_nodes)
-    dst = torch.arange(n_nodes).repeat(n_nodes)
-    edge_index = torch.stack([src, dst])
-
-    print(f"[GCN-LSTM] Training demo ({n_nodes} nodes, {T} timesteps, {epochs} epochs)...")
+    # Sliding window dataset: predict queue at t+1 from last seq_len steps
+    best_loss = float("inf")
     for epoch in range(epochs):
-        x_seq = _make_synthetic_node_data(n_nodes, T)   # (T, N, 4)
-        target = torch.rand(n_nodes)                     # congestion score per node
+        epoch_loss = 0.0
+        n_batches  = 0
 
-        model.train()
-        pred = model(x_seq, edge_index)
-        loss = criterion(pred, target)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        for t in range(seq_len, T - 1):
+            x_seq  = x_all[t - seq_len : t]          # (seq_len, N, 4)
+            target = x_all[t + 1, :, 0]              # queue at next step (N,)
+
+            model.train()
+            pred = model(x_seq, edge_index)
+            loss = criterion(pred, target)
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            epoch_loss += loss.item()
+            n_batches  += 1
+
+        scheduler.step()
+        avg = epoch_loss / max(n_batches, 1)
+        if avg < best_loss:
+            best_loss = avg
+            os.makedirs("models", exist_ok=True)
+            torch.save(model.state_dict(), "models/gcn_lstm_best.pt")
 
         if epoch % 10 == 0 or epoch == epochs - 1:
-            print(f"  Epoch {epoch:3d}/{epochs} | Loss: {loss.item():.4f}")
+            print(f"  Epoch {epoch:3d}/{epochs} | Loss: {avg:.4f} | Best: {best_loss:.4f}")
 
-    os.makedirs("models", exist_ok=True)
     torch.save(model.state_dict(), "models/gcn_lstm.pt")
-    print("Saved: models/gcn_lstm.pt")
+    print("Saved: models/gcn_lstm.pt  (best: models/gcn_lstm_best.pt)")
     return model
 
 

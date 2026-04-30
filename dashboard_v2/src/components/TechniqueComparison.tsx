@@ -149,7 +149,7 @@ export default function TechniqueComparison() {
     const total = matrix.truePositive + matrix.falsePositive + matrix.trueNegative + matrix.falseNegative;
     
     return (
-      <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+      <div key={algorithm} className="bg-white/5 rounded-xl p-4 border border-white/10">
         <h4 className="text-white font-bold mb-3">{algorithm} Confusion Matrix</h4>
         
         <div className="grid grid-cols-3 gap-2 mb-4">

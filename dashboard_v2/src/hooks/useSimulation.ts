@@ -8,29 +8,18 @@ export type SimStep = {
   co2_mg: number;
   congestion: string;
   phase_name: string;
-  vehicles: Array<{ id: string; lat: number; lon: number; speed: number }>;
+  vehicles: Array<{ id: string; lat: number; lon: number; speed: number; type: string }>;
 };
 
-function getLOS(avgDelay: number): string {
-  if (avgDelay <= 10) return "A";
-  if (avgDelay <= 20) return "B";
-  if (avgDelay <= 35) return "C";
-  if (avgDelay <= 55) return "D";
-  if (avgDelay <= 80) return "E";
-  return "F";
-}
-
 export function useSimulation() {
-  const [latest, setLatest] = useState<SimStep | null>(null);
+  const [data, setData]       = useState<SimStep | null>(null);
   const [history, setHistory] = useState<SimStep[]>([]);
-  const [los, setLos] = useState<string>("—");
-  const [status, setStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
+  const [status, setStatus]   = useState<"idle"|"running"|"complete"|"error">("idle");
   const ws = useRef<WebSocket | null>(null);
 
   const startSimulation = useCallback((config: any) => {
     setHistory([]);
-    setLatest(null);
-    setLos("—");
+    setData(null);
     const clientId = Math.random().toString(36).substring(7);
     const token = localStorage.getItem("token");
     ws.current = new WebSocket(`ws://localhost:8000/simulation/ws/${clientId}?token=${token}`);
@@ -41,34 +30,29 @@ export function useSimulation() {
     };
 
     ws.current.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === "STEP") {
-        setLatest(msg);
-        setHistory(prev => {
-          const next = [...prev, msg];
-          // Recalculate LoS from running average
-          const avg = next.reduce((s, r) => s + r.total_queue, 0) / next.length * 5;
-          setLos(getLOS(avg));
-          return next;
-        });
-      } else if (msg.type === "COMPLETE") {
+      const message = JSON.parse(event.data);
+      if (message.type === "STEP") {
+        setData(message);
+        setHistory(prev => [...prev.slice(-300), message]);  // keep last 300
+      } else if (message.type === "COMPLETE") {
         setStatus("complete");
-      } else if (msg.type === "ERROR") {
+      } else if (message.type === "ERROR") {
         setStatus("error");
       }
     };
 
-    ws.current.onclose = () => setStatus(s => s === "running" ? "idle" : s);
+    ws.current.onclose = () => { 
+        setStatus(prev => prev === "running" ? "idle" : prev); 
+    };
     ws.current.onerror = () => setStatus("error");
   }, []);
 
   const stopSimulation = useCallback(() => {
-    ws.current?.send(JSON.stringify({ type: "STOP" }));
     ws.current?.close();
     setStatus("idle");
   }, []);
 
   useEffect(() => () => { ws.current?.close(); }, []);
 
-  return { latest, history, los, status, startSimulation, stopSimulation };
+  return { data, history, status, startSimulation, stopSimulation };
 }

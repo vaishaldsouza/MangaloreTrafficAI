@@ -677,7 +677,7 @@ def run_python_simulation(method, max_steps, reward_type="wait_time", dataset_df
 
     if progress_ph:
         progress_ph.empty()
-    return pd.DataFrame(history), pos_frames, []
+    return pd.DataFrame(history), pos_frames, [], []
 
 
 def run_sumo_simulation(method, max_steps, use_gui, scenario=None, reward_type="wait_time",
@@ -718,12 +718,18 @@ def run_sumo_simulation(method, max_steps, use_gui, scenario=None, reward_type="
         rf_pred = predict_rf_label(obs, step, rf_clf, rf_le)
         phase_n = PHASE_LABELS.get(info["current_phase"], f"Phase {info['current_phase']}")
 
+        type_counts = {}
+        for veh_id in traci.vehicle.getIDList():
+            vt = traci.vehicle.getTypeID(veh_id)
+            type_counts[vt] = type_counts.get(vt, 0) + 1
+
         row = {"step":step, "reward":reward, "phase":info["current_phase"],
                "phase_name":phase_n, "total_vehicles":info["total_vehicles"],
                "total_queue":total_q, "congestion":cong,
                "co2_mg":info.get("co2_mg", 0),
                "accident_active":info.get("accident_active", False),
-               "rf_pred_label":rf_pred}
+               "rf_pred_label":rf_pred,
+               "vehicle_types": type_counts}
         for lane, cnt in lc.items(): row[f"lane_{lane.split('_')[-1][:8]}"] = cnt
         history.append(row)
 
@@ -768,9 +774,10 @@ def run_sumo_simulation(method, max_steps, use_gui, scenario=None, reward_type="
                 progress_ph.progress(step/max_steps, f"Step {step}/{max_steps} — {phase_n}")
         step += 1
 
+    jhist = getattr(env, "junction_history", [])
     env.close()
     if progress_ph: progress_ph.empty()
-    return pd.DataFrame(history), pos_frames, junction_data_last
+    return pd.DataFrame(history), pos_frames, junction_data_last, jhist
 
 
 def run_simulation(method, max_steps, use_gui, scenario=None, reward_type="wait_time",
@@ -926,7 +933,7 @@ with tab_sim:
 
         from scenarios import get_scenario
         scenario_cfg = get_scenario(scen_name)
-        df, pos, jct = run_simulation(
+        df, pos, jct, jhist = run_simulation(
             method, max_steps, use_gui, 
             scenario=scenario_cfg, 
             reward_type=reward_type,
@@ -939,6 +946,7 @@ with tab_sim:
         st.session_state.sim_pos    = pos
         st.session_state.sim_method = method
         st.session_state["sim_jct"] = jct
+        st.session_state["junction_history"] = jhist
 
         # auto-save to DB
         from database import SimulationDB
@@ -1010,6 +1018,14 @@ with tab_sim:
                 st.line_chart(df.set_index("step")[["co2_mg"]], color=["#f2cc60"])
                 st.caption("Total CO₂ (mg) emitted by all vehicles per simulation step.")
 
+        if "vehicle_types" in df.columns:
+            st.markdown("#### 🚗 Vehicle Type Mix")
+            type_counts = df["vehicle_types"].iloc[-1] if df["vehicle_types"].iloc[-1] else {}
+            if type_counts:
+                st.bar_chart(type_counts)
+            else:
+                st.info("No vehicles active at simulation end.")
+
         if "rf_pred_label" in df.columns and "congestion" in df.columns:
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("#### 🎯 Prediction Accuracy (Confusion Matrix)")
@@ -1054,14 +1070,14 @@ with tab_cmp:
 
     if cmp_btn:
         prog_a = st.progress(0, f"Running {ma}…")
-        df_a, _, _ = run_simulation(
+        df_a, _, _, _ = run_simulation(
             ma, cmp_steps, False, progress_ph=prog_a,
             backend=cmp_backend, dataset_df=st.session_state.dataset_df,
         )
         st.session_state.cmp_df_a = df_a; st.session_state.cmp_m_a = ma
 
         prog_b = st.progress(0, f"Running {mb}…")
-        df_b, _, _ = run_simulation(
+        df_b, _, _, _ = run_simulation(
             mb, cmp_steps, False, progress_ph=prog_b,
             backend=cmp_backend, dataset_df=st.session_state.dataset_df,
         )
@@ -1297,6 +1313,9 @@ with tab_research:
         "📡 Real Data",
         "🚀 Advanced RL",
     ])
+
+    if "junction_history" not in st.session_state:
+        st.session_state["junction_history"] = None
 
     # ── Literature benchmarks ─────────────────────────────────────────────────
     with r_t1:
@@ -1592,6 +1611,22 @@ with tab_research:
                     st.json(meta)
                 except Exception as e:
                     st.error(f"Offline RL failed: {e}")
+
+            st.markdown("##### 🕸️ GCN-LSTM Spatial-Temporal Model")
+            gcn_epochs = st.slider("Epochs", 10, 100, 50, key="gcn_epochs")
+            if st.button("Train GCN-LSTM on simulation data", key="gcn_train"):
+                try:
+                    from src.models.gcn_lstm_model import train_gcn_lstm
+                    step_data = st.session_state.get("junction_history", None)
+                    if step_data:
+                        with st.spinner("Training GCN-LSTM..."):
+                            train_gcn_lstm(epochs=gcn_epochs, step_data=step_data)
+                        st.success("Saved: models/gcn_lstm_best.pt")
+                        st.info("The GCN model is now integrated into the controller's observations.")
+                    else:
+                        st.warning("No junction_history found. Run a simulation first to populate real data.")
+                except Exception as e:
+                    st.error(f"GCN-LSTM training failed: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — ANALYSIS

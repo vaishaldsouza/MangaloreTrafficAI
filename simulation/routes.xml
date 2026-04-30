@@ -37,6 +37,79 @@
 -->
 
 <routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+
+<!-- ===== Mangalore-realistic vehicle types ===== -->
+
+<!-- Auto-rickshaw: dominant Mangalore vehicle, slow, narrow -->
+<vType id="autorickshaw" vClass="taxi" color="1,0.84,0"
+       length="2.8" width="1.4" maxSpeed="11" accel="1.5" decel="4.0"
+       sigma="0.7" tau="1.2" emissionClass="HBEFA3/PC_G_EU2"/>
+
+<!-- City bus: KSRTC/private buses on main corridors -->
+<vType id="bus" vClass="bus" color="0.8,0.1,0.1"
+       length="10.5" width="2.5" maxSpeed="14" accel="1.0" decel="3.5"
+       sigma="0.4" tau="1.8" emissionClass="HBEFA3/HDV_D_EU4"/>
+
+<!-- Motorcycle: very high share in Mangalore -->
+<vType id="motorcycle" vClass="motorcycle" color="0.2,0.2,0.8"
+       length="2.2" width="0.8" maxSpeed="18" accel="2.8" decel="5.5"
+       sigma="0.8" tau="0.9" emissionClass="HBEFA3/PC_G_EU4"/>
+
+<!-- Goods vehicle: trucks serving the port/industrial areas -->
+<vType id="goods_truck" vClass="truck" color="0.4,0.4,0.4"
+       length="8.5" width="2.4" maxSpeed="12" accel="0.8" decel="3.0"
+       sigma="0.3" tau="2.0" emissionClass="HBEFA3/HDV_D_EU3"/>
+
+<!-- Pedestrian (as slow vehicle on footpath edges if available) -->
+<vType id="pedestrian" vClass="pedestrian" color="0,0.8,0"
+       length="0.5" width="0.5" maxSpeed="1.5" accel="0.5" decel="1.0"
+       sigma="0.9" tau="1.0"/>
+
+<!-- Emergency: already added previously — keep or add if missing -->
+<vType id="emergency" vClass="emergency" color="1,0,0"
+       maxSpeed="22" accel="2.5" decel="5.0" sigma="0.1"/>
+
+<!-- ===== Realistic Mangalore traffic flows ===== -->
+
+<!-- Morning peak 7–10 AM (steps 0–2160 at 5s/step) -->
+<flow id="auto_morning" type="autorickshaw"
+      from="131993103#2" to="-1047437082"
+      begin="0" end="2160" vehsPerHour="180" departLane="best" departSpeed="max"/>
+
+<flow id="moto_morning" type="motorcycle"
+      from="156015647#3" to="1367397095"
+      begin="0" end="2160" vehsPerHour="420" departLane="best" departSpeed="max"/>
+
+<flow id="bus_morning" type="bus"
+      from="-157709829" to="-156020180#4"
+      begin="0" end="2160" vehsPerHour="40" departLane="best" departSpeed="max"/>
+
+<flow id="truck_morning" type="goods_truck"
+      from="318725571#3" to="-1095083520"
+      begin="0" end="2160" vehsPerHour="30" departLane="best" departSpeed="max"/>
+
+<!-- Off-peak midday (steps 2160–4320) -->
+<flow id="auto_midday" type="autorickshaw"
+      from="131993103#2" to="-1047437082"
+      begin="2160" end="4320" vehsPerHour="80" departLane="best" departSpeed="max"/>
+
+<flow id="moto_midday" type="motorcycle"
+      from="156015647#3" to="1367397095"
+      begin="2160" end="4320" vehsPerHour="200" departLane="best" departSpeed="max"/>
+
+<!-- Evening peak 5–8 PM (steps 4320–6480) -->
+<flow id="auto_evening" type="autorickshaw"
+      from="-1047437082" to="131993103#2"
+      begin="4320" end="6480" vehsPerHour="200" departLane="best" departSpeed="max"/>
+
+<flow id="moto_evening" type="motorcycle"
+      from="1367397095" to="156015647#3"
+      begin="4320" end="6480" vehsPerHour="460" departLane="best" departSpeed="max"/>
+
+<flow id="bus_evening" type="bus"
+      from="-156020180#4" to="-157709829"
+      begin="4320" end="6480" vehsPerHour="45" departLane="best" departSpeed="max"/>
+
     <vehicle id="0" depart="0.00">
         <route edges="131993103#2 -131993103#2 -131993103#1 -131993103#0 209721150#3 209721150#4 209721150#5 209721150#6 209721150#7 209721150#8 209721150#9 -902985181#0 -902985181#5 -902985181#4 1369161859#0 1369161859#1 1369161863#0 1369161863#1 1369161863#2 132056580#1 132056580#2 132056580#3 132056580#4 132056580#5 903009071#4 903009071#5 132056581#0 132056581#1 26209723#1 26209723#2-AddedOnRampEdge 26209723#2 26209723#3 26209723#4 26209723#5 26209723#7 26209723#8 26209723#10 26209723#11 156016850#4 26209719#0 26209719#1 26209719#2 26209719#3 26209719#4 26209719#5 26209719#6 26209719#7 131994072#0 131994072#1 319579316#3 319579316#4 26515163#0 26515163#1 26515163#3 156016848 -1047437082"/>
     </vehicle>

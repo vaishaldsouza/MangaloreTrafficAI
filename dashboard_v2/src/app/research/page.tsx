@@ -54,7 +54,10 @@ export default function ResearchPage() {
           source: d.Source
         })));
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      // Silently handle connection errors - backend may not be running
+      console.warn("Backend unavailable - literature data unavailable");
+    }
   };
 
   const runAblation = async () => {
@@ -75,7 +78,10 @@ export default function ResearchPage() {
           impact: parseFloat(d["Accuracy %"]) / 100
         })));
       }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      // Silently handle connection errors - backend may not be running
+      console.warn("Backend unavailable - ablation data unavailable");
+    }
     setIsAblating(false);
   };
 
@@ -87,7 +93,10 @@ export default function ResearchPage() {
          headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` }
        });
        alert("Optimization (Optuna) started in background. Check server logs for progress.");
-     } catch(e) { alert("Failed to start optimization."); }
+     } catch(e) {
+       console.warn("Backend unavailable - optimization not started");
+       alert("Cannot start optimization - backend server unavailable.");
+     }
      setIsOptimizing(false);
   };
 

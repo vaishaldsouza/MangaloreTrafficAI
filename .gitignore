@@ -72,3 +72,11 @@ package-lock.json
 .DS_Store
 Thumbs.db
 desktop.ini
+.gemini/
+logs.db
+yolov8n.pt
+.next/
+dist/
+node_modules/
+.env*
+!.env.example

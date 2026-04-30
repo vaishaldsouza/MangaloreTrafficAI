@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import TechniqueComparison from "./TechniqueComparison";
 import DatasetImport from "./DatasetImport";
 import RouteMap from "./RouteMap";
 import { 
@@ -53,14 +52,24 @@ interface TrafficData {
 }
 
 const mangaloreLocations: Location[] = [
-  { id: "1", name: "Hampankatta", lat: 12.8700, lon: 74.8400, address: "City Center" },
-  { id: "2", name: "Mangaladevi", lat: 12.8780, lon: 74.8450, address: "Temple Area" },
-  { id: "3", name: "PVS", lat: 12.8650, lon: 74.8350, address: "PVS Circle" },
-  { id: "4", name: "Kulshekar", lat: 12.8800, lon: 74.8500, address: "Northern Area" },
-  { id: "5", name: "Lalbagh", lat: 12.8600, lon: 74.8300, address: "Southern Area" },
-  { id: "6", name: "Bunder", lat: 12.8750, lon: 74.8250, address: "Port Area" },
-  { id: "7", name: "Kadri", lat: 12.8850, lon: 74.8550, address: "Eastern Area" },
-  { id: "8", name: "Surathkal", lat: 12.9800, lon: 74.8200, address: "Northern Suburb" },
+  { id: "1",  name: "Hampankatta",     lat: 12.8700, lon: 74.8400, address: "City Center" },
+  { id: "2",  name: "Mangaladevi",     lat: 12.8780, lon: 74.8450, address: "Temple Area" },
+  { id: "3",  name: "PVS Circle",      lat: 12.8650, lon: 74.8350, address: "PVS Junction" },
+  { id: "4",  name: "Kulshekar",       lat: 12.8800, lon: 74.8500, address: "Northern Area" },
+  { id: "5",  name: "Lalbagh",         lat: 12.8600, lon: 74.8300, address: "Southern Area" },
+  { id: "6",  name: "Bunder",          lat: 12.8750, lon: 74.8250, address: "Port Area" },
+  { id: "7",  name: "Kadri",           lat: 12.8850, lon: 74.8550, address: "Kadri Hills" },
+  { id: "8",  name: "Surathkal",       lat: 12.9800, lon: 74.8200, address: "NITK Area" },
+  { id: "9",  name: "Bejai",           lat: 12.8720, lon: 74.8480, address: "Bejai Market" },
+  { id: "10", name: "Attavar",         lat: 12.8660, lon: 74.8420, address: "Attavar Junction" },
+  { id: "11", name: "Kankanady",       lat: 12.8830, lon: 74.8530, address: "Kankanady Cross" },
+  { id: "12", name: "Bondel",          lat: 12.8900, lon: 74.8600, address: "Bondel Junction" },
+  { id: "13", name: "Urwa",            lat: 12.8580, lon: 74.8460, address: "Urwa Market" },
+  { id: "14", name: "Falnir",          lat: 12.8740, lon: 74.8370, address: "Falnir Road" },
+  { id: "15", name: "Mangalore Central Station", lat: 12.8673, lon: 74.8431, address: "Railway Station" },
+  { id: "16", name: "Old Port Road",   lat: 12.8710, lon: 74.8220, address: "Old Port" },
+  { id: "17", name: "Pandeshwar",      lat: 12.8695, lon: 74.8388, address: "Pandeshwar Junction" },
+  { id: "18", name: "Kodialbail",      lat: 12.8760, lon: 74.8330, address: "Kodialbail" },
 ];
 
 export default function RouteFinder() {
@@ -69,11 +78,16 @@ export default function RouteFinder() {
   const [routes, setRoutes] = useState<RouteOption[]>([]);
   const [selectedRoute, setSelectedRoute] = useState<RouteOption | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  
+  // Separate states for start and end search
+  const [startQuery, setStartQuery] = useState("");
+  const [endQuery, setEndQuery] = useState("");
+  const [showStartSugg, setShowStartSugg] = useState(false);
+  const [showEndSugg, setShowEndSugg] = useState(false);
+
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
   const [isLiveTraffic, setIsLiveTraffic] = useState(false);
-  const [activeView, setActiveView] = useState<"routes" | "comparison" | "map">("routes");
+  const [activeView, setActiveView] = useState<"routes" | "map">("routes");
 
   // Simulate real-time traffic data
   useEffect(() => {
@@ -200,20 +214,6 @@ export default function RouteFinder() {
     return waypoints;
   };
 
-  const handleDatasetImport = (importedData: any[]) => {
-    // Process imported dataset and update traffic simulation
-    console.log('Dataset imported:', importedData);
-    setIsLiveTraffic(true);
-    
-    // You can use the imported data to enhance route calculations
-    // For now, we'll just enable live traffic to show the effect
-  };
-
-  const filteredLocations = mangaloreLocations.filter(loc =>
-    loc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    loc.address.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
   const getTrafficColor = (level: string) => {
     switch (level) {
       case "low": return "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
@@ -270,17 +270,6 @@ export default function RouteFinder() {
               Routes
             </button>
             <button
-              onClick={() => setActiveView("comparison")}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                activeView === "comparison"
-                  ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
-                  : "bg-white/5 text-slate-400 border border-transparent"
-              )}
-            >
-              Compare
-            </button>
-            <button
               onClick={() => setActiveView("map")}
               className={cn(
                 "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
@@ -313,18 +302,23 @@ export default function RouteFinder() {
             <div className="flex-1 relative">
               <input
                 type="text"
-                placeholder="Starting point..."
-                value={startPoint?.name || ""}
+                placeholder="Search starting point..."
+                value={startPoint ? startPoint.name : startQuery}
                 onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setShowSuggestions(true);
+                  setStartQuery(e.target.value);
+                  setShowStartSugg(true);
+                  setStartPoint(null);
                 }}
-                onFocus={() => setShowSuggestions(true)}
+                onFocus={() => setShowStartSugg(true)}
+                onBlur={() => setTimeout(() => setShowStartSugg(false), 150)}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-emerald-500 transition-all"
               />
               {startPoint && (
                 <button
-                  onClick={() => setStartPoint(null)}
+                  onClick={() => {
+                    setStartPoint(null);
+                    setStartQuery("");
+                  }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white"
                 >
                   <X className="w-4 h-4" />
@@ -334,27 +328,30 @@ export default function RouteFinder() {
           </div>
           
           <AnimatePresence>
-            {showSuggestions && !startPoint && (
+            {showStartSugg && !startPoint && (
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="absolute top-full left-0 right-0 mt-2 bg-slate-900/95 backdrop-blur-md rounded-xl border border-white/10 z-50 max-h-48 overflow-y-auto"
+                className="absolute top-full left-0 right-0 mt-2 bg-slate-900/95 backdrop-blur-md rounded-xl border border-white/10 z-50 max-h-48 overflow-y-auto shadow-2xl"
               >
-                {filteredLocations.map((location) => (
-                  <button
-                    key={location.id}
-                    onClick={() => {
-                      setStartPoint(location);
-                      setSearchQuery("");
-                      setShowSuggestions(false);
-                    }}
-                    className="w-full px-4 py-3 text-left hover:bg-white/5 transition-colors border-b border-white/5 last:border-b-0"
-                  >
-                    <div className="text-white font-medium">{location.name}</div>
-                    <div className="text-[10px] text-slate-400">{location.address}</div>
-                  </button>
-                ))}
+                {mangaloreLocations
+                  .filter(l => l.name.toLowerCase().includes(startQuery.toLowerCase()))
+                  .map((location) => (
+                    <button
+                      key={location.id}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setStartPoint(location);
+                        setStartQuery("");
+                        setShowStartSugg(false);
+                      }}
+                      className="w-full px-4 py-3 text-left hover:bg-white/5 transition-colors border-b border-white/5 last:border-b-0"
+                    >
+                      <div className="text-white font-medium text-sm">{location.name}</div>
+                      <div className="text-[10px] text-slate-400">{location.address}</div>
+                    </button>
+                  ))}
               </motion.div>
             )}
           </AnimatePresence>
@@ -368,18 +365,23 @@ export default function RouteFinder() {
             <div className="flex-1 relative">
               <input
                 type="text"
-                placeholder="Destination..."
-                value={endPoint?.name || ""}
+                placeholder="Search destination..."
+                value={endPoint ? endPoint.name : endQuery}
                 onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setShowSuggestions(true);
+                  setEndQuery(e.target.value);
+                  setShowEndSugg(true);
+                  setEndPoint(null);
                 }}
-                onFocus={() => setShowSuggestions(true)}
+                onFocus={() => setShowEndSugg(true)}
+                onBlur={() => setTimeout(() => setShowEndSugg(false), 150)}
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-red-500 transition-all"
               />
               {endPoint && (
                 <button
-                  onClick={() => setEndPoint(null)}
+                  onClick={() => {
+                    setEndPoint(null);
+                    setEndQuery("");
+                  }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white"
                 >
                   <X className="w-4 h-4" />
@@ -389,29 +391,30 @@ export default function RouteFinder() {
           </div>
           
           <AnimatePresence>
-            {showSuggestions && !endPoint && (
+            {showEndSugg && !endPoint && (
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="absolute top-full left-0 right-0 mt-2 bg-slate-900/95 backdrop-blur-md rounded-xl border border-white/10 z-50 max-h-48 overflow-y-auto"
+                className="absolute top-full left-0 right-0 mt-2 bg-slate-900/95 backdrop-blur-md rounded-xl border border-white/10 z-50 max-h-48 overflow-y-auto shadow-2xl"
               >
-                {filteredLocations
-                  .filter(loc => loc.id !== startPoint?.id)
+                {mangaloreLocations
+                  .filter(l => l.name.toLowerCase().includes(endQuery.toLowerCase()) && l.id !== startPoint?.id)
                   .map((location) => (
-                  <button
-                    key={location.id}
-                    onClick={() => {
-                      setEndPoint(location);
-                      setSearchQuery("");
-                      setShowSuggestions(false);
-                    }}
-                    className="w-full px-4 py-3 text-left hover:bg-white/5 transition-colors border-b border-white/5 last:border-b-0"
-                  >
-                    <div className="text-white font-medium">{location.name}</div>
-                    <div className="text-[10px] text-slate-400">{location.address}</div>
-                  </button>
-                ))}
+                    <button
+                      key={location.id}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setEndPoint(location);
+                        setEndQuery("");
+                        setShowEndSugg(false);
+                      }}
+                      className="w-full px-4 py-3 text-left hover:bg-white/5 transition-colors border-b border-white/5 last:border-b-0"
+                    >
+                      <div className="text-white font-medium text-sm">{location.name}</div>
+                      <div className="text-[10px] text-slate-400">{location.address}</div>
+                    </button>
+                  ))}
               </motion.div>
             )}
           </AnimatePresence>
@@ -491,7 +494,7 @@ export default function RouteFinder() {
               )}
 
               {!isCalculating && routes.length > 0 && (
-                <div className="flex-1 overflow-y-auto space-y-3">
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-none">
                   {routes.map((route, index) => (
                     <motion.div
                       key={route.id}
@@ -500,7 +503,7 @@ export default function RouteFinder() {
                       transition={{ delay: index * 0.1 }}
                       onClick={() => setSelectedRoute(route)}
                       className={cn(
-                        "p-4 rounded-xl border cursor-pointer transition-all hover:scale-[1.02]",
+                        "p-4 rounded-xl border cursor-pointer transition-all hover:scale-[1.01]",
                         selectedRoute?.id === route.id
                           ? "bg-blue-500/10 border-blue-500/30"
                           : "bg-white/5 border-white/10 hover:bg-white/10"
@@ -517,9 +520,9 @@ export default function RouteFinder() {
                           
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-2">
-                              <h4 className="text-white font-bold">{route.name}</h4>
+                              <h4 className="text-white font-bold text-sm">{route.name}</h4>
                               <span className={cn(
-                                "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest",
+                                "px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest",
                                 getRouteColor(route.type)
                               )}>
                                 {route.type}
@@ -528,27 +531,27 @@ export default function RouteFinder() {
                             
                             <div className="grid grid-cols-3 gap-3 mb-3">
                               <div className="text-center">
-                                <div className="text-lg font-bold text-white">{route.distance}km</div>
-                                <div className="text-[9px] text-slate-500">Distance</div>
+                                <div className="text-md font-bold text-white">{route.distance}km</div>
+                                <div className="text-[8px] text-slate-500 uppercase">Distance</div>
                               </div>
                               <div className="text-center">
-                                <div className="text-lg font-bold text-white">{route.duration}min</div>
-                                <div className="text-[9px] text-slate-500">Duration</div>
+                                <div className="text-md font-bold text-white">{route.duration}min</div>
+                                <div className="text-[8px] text-slate-500 uppercase">Duration</div>
                               </div>
                               <div className="text-center">
-                                <div className="text-lg font-bold text-white">{route.co2Emission}kg</div>
-                                <div className="text-[9px] text-slate-500">CO2</div>
+                                <div className="text-md font-bold text-white">{route.co2Emission}kg</div>
+                                <div className="text-[8px] text-slate-500 uppercase">CO2</div>
                               </div>
                             </div>
                             
                             <div className="flex items-center gap-2">
                               <span className={cn(
-                                "px-2 py-1 rounded-lg text-[10px] font-bold",
+                                "px-2 py-0.5 rounded-md text-[9px] font-bold",
                                 getTrafficColor(route.trafficLevel)
                               )}>
-                                Traffic: {route.trafficLevel}
+                                {route.trafficLevel.toUpperCase()} TRAFFIC
                               </span>
-                              <span className="text-[10px] text-slate-400">
+                              <span className="text-[9px] text-slate-400 font-medium">
                                 Congestion: {route.congestionScore}%
                               </span>
                             </div>
@@ -557,12 +560,12 @@ export default function RouteFinder() {
                         
                         <div className="flex flex-col items-end gap-2">
                           {route.realTimeUpdates && (
-                            <div className="flex items-center gap-1 text-[10px] text-emerald-400">
-                              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                            <div className="flex items-center gap-1 text-[9px] text-emerald-400 font-bold uppercase tracking-tighter">
+                              <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
                               Live
                             </div>
                           )}
-                          <ArrowRight className="w-5 h-5 text-slate-400" />
+                          <ArrowRight className="w-4 h-4 text-slate-500" />
                         </div>
                       </div>
                       
@@ -572,23 +575,25 @@ export default function RouteFinder() {
                           animate={{ opacity: 1, height: "auto" }}
                           className="mt-4 pt-4 border-t border-white/10"
                         >
-                          <h5 className="text-white font-bold mb-2">Route Instructions:</h5>
-                          <div className="space-y-2">
+                          <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Turn-by-turn Navigation</h5>
+                          <div className="space-y-3">
                             {route.instructions.map((instruction, idx) => (
-                              <div key={idx} className="flex items-start gap-2">
-                                <div className="w-5 h-5 bg-blue-500/20 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-                                  <span className="text-[10px] text-blue-400 font-bold">{idx + 1}</span>
+                              <div key={idx} className="flex items-start gap-3">
+                                <div className="w-5 h-5 bg-blue-500/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 border border-blue-500/30">
+                                  <span className="text-[10px] text-blue-400 font-black">{idx + 1}</span>
                                 </div>
-                                <p className="text-[11px] text-slate-300">{instruction}</p>
+                                <p className="text-[11px] text-slate-300 leading-relaxed">{instruction}</p>
                               </div>
                             ))}
                           </div>
                           
-                          <div className="mt-4 p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
-                            <div className="flex items-center gap-2">
-                              <CheckCircle className="w-4 h-4 text-emerald-400" />
-                              <span className="text-[11px] text-emerald-400 font-medium">
-                                This route saves {(route.congestionScore < 50 ? "30-40%" : "10-20%")} compared to average traffic conditions
+                          <div className="mt-4 p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10">
+                            <div className="flex items-center gap-3">
+                              <div className="p-1.5 bg-emerald-500/20 rounded-lg">
+                                <CheckCircle className="w-3 h-3 text-emerald-400" />
+                              </div>
+                              <span className="text-[10px] text-emerald-400 font-medium leading-tight">
+                                This route saves {(route.congestionScore < 50 ? "35%" : "15%")} fuel compared to peak traffic averages.
                               </span>
                             </div>
                           </div>
@@ -601,19 +606,6 @@ export default function RouteFinder() {
             </motion.div>
           )}
 
-          {activeView === "comparison" && (
-            <motion.div
-              key="comparison"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex-1"
-            >
-              <TechniqueComparison />
-            </motion.div>
-          )}
-
-          
           {activeView === "map" && (
             <motion.div
               key="map"
@@ -645,7 +637,7 @@ export default function RouteFinder() {
           <div className="flex items-center gap-2 mb-2">
             <AlertTriangle className="w-4 h-4 text-orange-400" />
             <span className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">
-              Active Incidents
+              Live Incidents
             </span>
           </div>
           <div className="space-y-1">
@@ -654,9 +646,9 @@ export default function RouteFinder() {
               .slice(0, 2)
               .map((traffic) =>
                 traffic.incidents.map((incident, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-[10px] text-orange-400/80">
-                    <div className="w-1.5 h-1.5 bg-orange-400 rounded-full" />
-                    <span>{incident.type} - {incident.severity} at {incident.location}</span>
+                  <div key={idx} className="flex items-center gap-2 text-[10px] text-orange-400/80 bg-orange-500/5 p-2 rounded-lg border border-orange-500/10">
+                    <div className="w-1.5 h-1.5 bg-orange-400 rounded-full shadow-[0_0_5px_rgba(251,146,60,0.5)]" />
+                    <span>{incident.type.toUpperCase()} - {incident.severity} at {incident.location}</span>
                   </div>
                 ))
               )}

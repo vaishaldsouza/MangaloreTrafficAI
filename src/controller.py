@@ -10,9 +10,11 @@ Enhancements over v1:
 """
 import os
 import sys
+import random
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
+import torch
 
 if "SUMO_HOME" in os.environ:
     sys.path.append(os.path.join(os.environ["SUMO_HOME"], "tools"))
@@ -70,6 +72,22 @@ class SumoTrafficEnv(gym.Env):
         self._accident_done = False
         self.use_cv = use_cv
         self.cv_pipeline = None
+        self.junction_history = []
+        self.all_junction_ids = []
+
+        # GCN model integration
+        self.gcn_model = None
+        gcn_path = "models/gcn_lstm_best.pt"
+        if os.path.exists(gcn_path):
+            try:
+                from .models.gcn_lstm_model import SpatialTemporalModel, build_graph_from_sumo_net
+                self._edge_index, self._node_idx = build_graph_from_sumo_net()
+                self.gcn_model = SpatialTemporalModel(node_features=4)
+                self.gcn_model.load_state_dict(torch.load(gcn_path, map_location="cpu"))
+                self.gcn_model.eval()
+                print(f"[GCN] Loaded model from {gcn_path}")
+            except Exception as e:
+                print(f"[GCN] Failed to load model: {e}")
 
         # State for Python Simulator
         self._python_queues = np.zeros(4, dtype=float)
@@ -145,6 +163,7 @@ class SumoTrafficEnv(gym.Env):
         if self.scenario is not None:
             self._apply_scenario()
 
+        self.all_junction_ids = traci.trafficlight.getIDList()
         self._add_pedestrian_phase()
 
     def _apply_scenario(self):
@@ -193,7 +212,21 @@ class SumoTrafficEnv(gym.Env):
         # Original TraCI path
         counts = [traci.lane.getLastStepVehicleNumber(l) / 20.0 for l in self._controlled_lanes]
         waits  = [traci.lane.getWaitingTime(l) / 300.0 for l in self._controlled_lanes]
-        return np.clip(np.array(counts + waits, dtype=np.float32), 0.0, 1.0)
+        obs = np.clip(np.array(counts + waits, dtype=np.float32), 0.0, 1.0)
+
+        # Inject GNN predicted queues
+        if self.gcn_model and len(self.junction_history) >= 12:
+            try:
+                from .models.gcn_lstm_model import collect_sumo_node_features
+                x_seq = collect_sumo_node_features(self._node_idx, self.junction_history[-12:])
+                with torch.no_grad():
+                    pred_queues = self.gcn_model(x_seq, self._edge_index).numpy()
+                # Append mean predicted neighbour queue as extra feature
+                obs = np.append(obs, np.clip(pred_queues.mean() / 20.0, 0, 1))
+            except Exception:
+                obs = np.append(obs, 0.0)
+        
+        return obs.astype(np.float32)
 
     def _get_reward(self) -> float:
         if self.backend == "Python Simulator":
@@ -210,29 +243,62 @@ class SumoTrafficEnv(gym.Env):
         )
         return -total_wait / 1000.0
 
-    def _get_co2(self) -> float:
-        if self.backend == "Python Simulator":
-            return float(np.sum(self._python_queues)) * 120.0
+    def _get_co2_mg(self):
+        EMISSION_FACTORS = {
+            "autorickshaw": 120,   # g CO2/km (2-stroke petrol)
+            "motorcycle":    80,
+            "city_bus":     850,   # per vehicle, not per passenger
+            "goods_truck":  900,
+            "emergency":    200,
+            "passenger":    160,   # default cars
+        }
         total = 0.0
         try:
-            for vid in traci.vehicle.getIDList():
-                total += traci.vehicle.getCO2Emission(vid)
+            for veh_id in traci.vehicle.getIDList():
+                vtype = traci.vehicle.getTypeID(veh_id)
+                speed = traci.vehicle.getSpeed(veh_id)
+                factor = EMISSION_FACTORS.get(vtype, 160)
+                # mg CO2 per simulation step (5s at given speed)
+                total += factor * speed * 5 / 1000 / 3600 * 1e6
         except Exception:
             pass
         return total
 
+    # Mangalore road segments for Python Simulator [start_lat, start_lon, end_lat, end_lon]
+    MANGALORE_ROADS = [
+        [12.8698, 74.8430, 12.8720, 74.8450],  # Hampankatta
+        [12.8650, 74.8380, 12.8680, 74.8400],  # Lalbagh
+        [12.8730, 74.8460, 12.8750, 74.8490],  # Bunts Hostel
+        [12.8600, 74.8350, 12.8630, 74.8370],  # Bendore
+        [12.8710, 74.8410, 12.8740, 74.8440],  # KS Rao Road
+        [12.8670, 74.8450, 12.8700, 74.8480],  # Mallikatte
+    ]
+
+    def _generate_python_vehicles(self) -> list:
+        """Generate realistic vehicle positions along Mangalore roads."""
+        vehicles = []
+        total = int(np.sum(self._python_queues))
+        for i in range(min(total, 40)):  # cap at 40 for performance
+            road = self.MANGALORE_ROADS[i % len(self.MANGALORE_ROADS)]
+            t = random.random()  # position along road segment (0-1)
+            # Interpolate position along road segment
+            lat = road[0] + t * (road[2] - road[0])
+            lon = road[1] + t * (road[3] - road[1])
+            # Add small random offset perpendicular to road
+            lat += (random.random() - 0.5) * 0.0003
+            lon += (random.random() - 0.5) * 0.0003
+            vehicles.append({
+                "id": f"veh_{i}",
+                "lat": round(lat, 6),
+                "lng": round(lon, 6),
+                "speed": round(random.uniform(0, 13.9), 2),
+                "type": random.choice(["passenger", "autorickshaw", "motorcycle"])
+            })
+        return vehicles
+
     def _get_info(self) -> dict:
         if self.backend == "Python Simulator":
-            # Mock vehicles for the map
-            vehicles = []
-            for i in range(int(np.sum(self._python_queues))):
-                vehicles.append({
-                    "id": f"v_{i}",
-                    "lat": 12.8700 + (np.random.rand() - 0.5) * 0.005,
-                    "lng": 74.8436 + (np.random.rand() - 0.5) * 0.005,
-                    "speed": 10.5,
-                    "type": "passenger"
-                })
+            vehicles = self._generate_python_vehicles()
             
             info = {
                 "step":           self.step_count,
@@ -243,7 +309,7 @@ class SumoTrafficEnv(gym.Env):
                 "phase_name":     "Python Adaptive",
                 "total_vehicles": int(np.sum(self._python_queues) + self._last_served),
                 "vehicles":       vehicles,
-                "co2_mg":         self._get_co2(),
+                "co2_mg":         float(np.sum(self._python_queues)) * 120.0,
                 "congestion":     "free" if np.sum(self._python_queues) < 5 else ("moderate" if np.sum(self._python_queues) < 12 else "high"),
             }
             return info
@@ -285,7 +351,7 @@ class SumoTrafficEnv(gym.Env):
             "phase_name":     phase_name,
             "total_vehicles": traci.simulation.getMinExpectedNumber(),
             "vehicles":       vehicles,
-            "co2_mg":         self._get_co2(),
+            "co2_mg":         self._get_co2_mg(),
             "scenario":       self.scenario.name if self.scenario else "Normal",
             "accident_active": self._accident_done,
             "congestion":     "free" if total_q < 5 else ("moderate" if total_q < 12 else "high"),
@@ -344,6 +410,20 @@ class SumoTrafficEnv(gym.Env):
                 traci.trafficlight.setPhase(self.junction_id, int(action))
             for _ in range(5):
                 traci.simulationStep()
+            
+            # Log per-step junction data
+            self.junction_history.append({
+                jid: {
+                    "queue":    sum(traci.lane.getLastStepVehicleNumber(l) 
+                                    for l in traci.trafficlight.getControlledLanes(jid)),
+                    "wait":     sum(traci.lane.getWaitingTime(l) 
+                                    for l in traci.trafficlight.getControlledLanes(jid)),
+                    "phase":    traci.trafficlight.getPhase(jid),
+                    "vehicles": traci.simulation.getMinExpectedNumber(),
+                }
+                for jid in self.all_junction_ids
+            })
+
             self.step_count += 1
             return self._get_obs(), self._get_reward(), self.step_count >= self.max_steps // 5 or traci.simulation.getMinExpectedNumber() == 0, False, self._get_info()
         else:

@@ -47,3 +47,7 @@ python-dotenv>=1.0
 ultralytics
 deep-sort-realtime
 opencv-python
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0
+pytest-cov

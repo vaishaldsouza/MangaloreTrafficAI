@@ -25,6 +25,9 @@ An AI-driven adaptive traffic signal control system for Mangalore city, built wi
 - **⚖️ LoS Grading**: Automatic Level of Service (LoS A-F) grading based on HCM (Highway Capacity Manual) standards.
 - **🌿 Environmental Impact**: Real-time tracking of CO₂ emissions and fuel consumption.
 - **🔬 Explainable AI (XAI)**: SHAP-based feature importance visualization.
+- **📁 Dataset Import**: Direct CSV/JSON traffic pattern injection to simulate specific real-world scenarios.
+- **🧪 Comparative Benchmarking**: Automatic indexing and report generation for historical simulation runs.
+
 
 ---
 

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.git
+node_modules/
+dashboard_v2/.next/
+*.db
+models/*.pt
+models/*.pkl
+reports/

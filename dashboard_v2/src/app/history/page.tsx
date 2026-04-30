@@ -73,8 +73,9 @@ export default function HistoryPage() {
         setRuns([]);
       }
     } catch (error) {
-      console.error("Failed to fetch history:", error);
-      setRuns([]); // Ensure runs is always an array on error
+      // Silently handle connection errors - backend may not be running
+      console.warn("Backend unavailable - history data unavailable");
+      setRuns([]);
     } finally {
       setLoading(false);
     }

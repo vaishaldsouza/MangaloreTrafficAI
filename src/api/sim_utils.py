@@ -89,6 +89,9 @@ def get_action(method, obs, action_space_n, step, rf_clf=None, rf_le=None,
             return int(np.argmax(obs[:n]))
     if method in ["PPO RL Model", "DQN RL Model", "PPO (Reinforcement Learning)", "DQN (Reinforcement Learning)"]:
         if rl_model is None: return (step // 30) % n
+        # Pad observation if model expects 12 but env gives 8
+        if len(obs) < 12:
+            obs = np.pad(obs, (0, 12 - len(obs)), 'constant')
         action, _ = rl_model.predict(obs, deterministic=True)
         return int(action)
     if method == "Actuated signals":

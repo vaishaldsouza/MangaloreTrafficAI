@@ -12,6 +12,10 @@ import { useSimulation, SimStep } from "@/hooks/useSimulation";
 import LiveMetricsChart from "@/components/LiveMetricsChart";
 import { useAuth } from "@/hooks/useAuth";
 import { motion, AnimatePresence } from "framer-motion";
+import GraphPanel from "@/components/GraphPanel";
+import DetectionTab from "@/components/DetectionTab";
+import TechniqueComparison from "@/components/TechniqueComparison";
+import DatasetImport from "@/components/DatasetImport";
 import { 
   Play, 
   Square,
@@ -25,12 +29,25 @@ import {
   Leaf,
   Navigation,
   Settings,
-  TrafficCone
+  TrafficCone,
+  Loader2,
+  Camera,
+  Upload,
+  Database
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const getLos = (queue: number) => {
+  if (queue < 5) return "A";
+  if (queue < 10) return "B";
+  if (queue < 20) return "C";
+  if (queue < 35) return "D";
+  if (queue < 50) return "E";
+  return "F";
+};
+
 export default function Home() {
-  const { latest, history, los, status, startSimulation, stopSimulation } = useSimulation();
+  const { data, history, status, startSimulation, stopSimulation } = useSimulation();
   const { isAuthenticated, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
   
@@ -40,10 +57,46 @@ export default function Home() {
     steps: 200,
     backend: "Python Simulator",
     reward_type: "wait_time",
-    showGui: false,
     use_cv: false,
-    n_junctions: 1
+    n_junctions: 1,
   });
+
+  const [datasetLoaded, setDatasetLoaded] = useState(false);
+  const [backendDown, setBackendDown] = useState(false);
+
+  React.useEffect(() => {
+    const checkBackend = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/health");
+        setBackendDown(!res.ok);
+      } catch {
+        setBackendDown(true);
+      }
+    };
+    checkBackend();
+    const interval = setInterval(checkBackend, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const [detResult, setDetResult] = useState<any>(null);
+  const [detLoading, setDetLoading] = useState(false);
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDetLoading(true);
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await fetch("http://localhost:8000/api/detect", { method: "POST", body: form });
+      const data = await res.json();
+      setDetResult(data);
+    } catch (error) {
+      console.error("Detection failed:", error);
+    } finally {
+      setDetLoading(false);
+    }
+  }
 
   const controllers = [
     "Fixed-cycle baseline",
@@ -72,11 +125,18 @@ export default function Home() {
     { id: "model-intelligence", label: "Model Intelligence", icon: TrendingUp },
     { id: "environmental", label: "Environmental", icon: Leaf },
     { id: "benchmarking", label: "Benchmarking", icon: FileText },
-    { id: "route-finder", label: "Route Finder", icon: Navigation }
+    { id: "route-finder", label: "Route Finder", icon: Navigation },
+    { id: "technique-compare", label: "Technique Comparison", icon: TrendingUp },
+    { id: "detection", label: "Detection", icon: Camera }
   ];
 
-  if (authLoading) return null;
-  if (!isAuthenticated) return null;
+  if (authLoading) return (
+    <div className="flex h-screen items-center justify-center bg-[#0d1117]">
+      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+
+  if (!isAuthenticated) return null; // router handles redirect
 
   // Mangalore Center (Hampankatta area)
   const mapCenter: [number, number] = [12.8700, 74.8400];
@@ -90,7 +150,7 @@ export default function Home() {
             <div className="flex items-center gap-2 mb-1">
               <span className={cn(
                 "w-2 h-2 rounded-full",
-                status === "running" ? "bg-emerald-500 animate-pulse" : "bg-slate-500"
+                status === "running" ? "bg-emerald-500 status-live" : "bg-slate-500"
               )} />
               <p className="text-[10px] uppercase tracking-widest font-bold text-slate-500">
                 {status === "running" ? "System Live" : "System Standby"}
@@ -99,7 +159,20 @@ export default function Home() {
             <h2 className="text-3xl font-bold text-white tracking-tight">Traffic Control Center</h2>
           </div>
           
-          <div className="flex gap-3">
+          <div className="flex items-center gap-4">
+            {datasetLoaded && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-cyan-400 text-xs font-bold shadow-lg shadow-cyan-500/5">
+                <Database className="w-4 h-4" />
+                Dataset Ready
+              </div>
+            )}
+            {backendDown && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-bold animate-pulse">
+                <AlertCircle className="w-4 h-4" />
+                Backend Offline
+              </div>
+            )}
+            <div className="flex gap-3">
             {status === "running" ? (
               <button 
                 onClick={stopSimulation}
@@ -118,13 +191,14 @@ export default function Home() {
               </button>
             )}
           </div>
-        </section>
+        </div>
+      </section>
 
         {/* Top Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <MetricCard 
             title="Current Queue" 
-            value={latest?.total_queue.toFixed(1) || "0.0"} 
+            value={data?.total_queue.toFixed(1) || "0.0"} 
             unit="vehicles" 
             change={status === "running" ? "Live Data" : "--"} 
             icon={Car} 
@@ -132,7 +206,7 @@ export default function Home() {
           />
           <MetricCard 
             title="Reward Signal" 
-            value={latest?.reward.toFixed(3) || "0.000"} 
+            value={data?.reward.toFixed(3) || "0.000"} 
             unit="pts" 
             change={status === "running" ? "Live Feedback" : "--"} 
             icon={TrendingUp} 
@@ -140,7 +214,7 @@ export default function Home() {
           />
           <MetricCard 
             title="Simulation Step" 
-            value={latest?.step.toString() || "0"} 
+            value={data?.step.toString() || "0"} 
             unit={`/ ${simConfig.steps}`} 
             change={status === "running" ? "Processing" : "--"} 
             icon={Activity} 
@@ -148,11 +222,19 @@ export default function Home() {
           />
           <MetricCard 
             title="Traffic State" 
-            value={latest?.congestion.toUpperCase() || "IDLE"} 
+            value={data?.congestion.toUpperCase() || "IDLE"} 
             unit="" 
             change={status === "running" ? "Continuous Monitoring" : "--"} 
             icon={Layers} 
             color="orange"
+          />
+          <MetricCard
+            title="Level of Service"
+            value={data ? getLos(data.total_queue) : "—"}
+            unit="HCM Grade"
+            change={status === "running" ? "Live Data" : "--"}
+            icon={AlertCircle}
+            color={data && getLos(data.total_queue) <= "B" ? "green" : (data && getLos(data.total_queue) >= "E" ? "orange" : "purple")}
           />
         </div>
 
@@ -164,28 +246,30 @@ export default function Home() {
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-400">Level of Service</span>
                   <span className={`text-2xl font-black ${
-                    los === "A" || los === "B" ? "text-emerald-400" :
-                    los === "C" || los === "D" ? "text-yellow-400" : "text-red-400"
-                  }`}>{los}</span>
+                    data && (getLos(data.total_queue) === "A" || getLos(data.total_queue) === "B") ? "text-emerald-400" :
+                    data && (getLos(data.total_queue) === "C" || getLos(data.total_queue) === "D") ? "text-yellow-400" : "text-red-400"
+                  }`}>{data ? getLos(data.total_queue) : "—"}</span>
                 </div>
              </div>
-             <LiveMetricsChart history={history} />
+             <div className="h-[300px] w-full">
+               <LiveMetricsChart history={history} />
+             </div>
           </div>
 
           <div className="glass-card p-6 rounded-3xl border border-white/[0.08] flex flex-col justify-center gap-4">
-             {latest ? (
+             {data ? (
                 <>
                   <div className="bg-slate-800/50 rounded-2xl p-4 border border-white/5">
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Current Reward</p>
-                    <p className="text-2xl font-black text-white">{latest.reward.toFixed(2)}</p>
+                    <p className="text-2xl font-black text-white">{data.reward.toFixed(2)}</p>
                   </div>
                   <div className="bg-slate-800/50 rounded-2xl p-4 border border-white/5">
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">CO₂ Emissions</p>
-                    <p className="text-2xl font-black text-white">{latest.co2_mg.toFixed(0)} <span className="text-xs text-slate-500 font-normal">mg</span></p>
+                    <p className="text-2xl font-black text-white">{data.co2_mg.toFixed(0)} <span className="text-xs text-slate-500 font-normal">mg</span></p>
                   </div>
                   <div className="bg-slate-800/50 rounded-2xl p-4 border border-white/5">
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Active Phase</p>
-                    <p className="text-sm font-bold text-blue-400">{latest.phase_name}</p>
+                    <p className="text-sm font-bold text-blue-400">{data.phase_name}</p>
                   </div>
                 </>
              ) : (
@@ -227,7 +311,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-[650px]"
+              className="grid grid-cols-1 lg:grid-cols-3 gap-8"
             >
               <div className="lg:col-span-2 glass-card overflow-hidden relative group rounded-3xl border border-white/[0.08]">
                 <AnimatePresence>
@@ -254,12 +338,12 @@ export default function Home() {
                 <MapView 
                   center={mapCenter} 
                   zoom={16} 
-                  vehicles={latest?.vehicles || []} 
+                  vehicles={data?.vehicles || []} 
                 />
               </div>
 
-              <div className="flex flex-col gap-6 h-full">
-                <div className="glass-card p-8 flex-1 flex flex-col rounded-3xl border border-white/[0.08]">
+              <div className="flex flex-col gap-6 h-full overflow-y-auto pr-2 scrollbar-none">
+                <div className="glass-card p-8 flex flex-col rounded-3xl border border-white/[0.08]">
                   <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
                     <div className="p-2 bg-slate-800 rounded-xl">
                       <Settings className="w-5 h-5 text-blue-400" />
@@ -294,43 +378,22 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {simConfig.backend === "SUMO" && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10">
-                             <span className="text-[10px] text-slate-400 font-bold uppercase">Show Native GUI</span>
-                             <input 
-                               type="checkbox" 
-                               checked={simConfig.showGui}
-                               onChange={(e) => setSimConfig({...simConfig, showGui: e.target.checked})}
-                               className="accent-blue-600 w-4 h-4 cursor-pointer"
-                             />
-                          </div>
-                          <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10">
-                             <span className="text-[10px] text-slate-400 font-bold uppercase">Use CV Pipeline</span>
-                             <input 
-                               type="checkbox" 
-                               checked={simConfig.use_cv}
-                               onChange={(e) => setSimConfig({...simConfig, use_cv: e.target.checked})}
-                               className="accent-blue-600 w-4 h-4 cursor-pointer"
-                             />
-                          </div>
-                        </div>
-                      )}
-                      
-                      <div className="pt-2">
-                         <label className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-3 block flex justify-between">
-                            <span>Multi-Junction Scale</span>
-                            <span className="text-blue-400">{simConfig.n_junctions} Nodes</span>
-                         </label>
-                         <input 
-                           type="range" 
-                           min="1" 
-                           max="3" 
-                           value={simConfig.n_junctions}
-                           onChange={(e) => setSimConfig({...simConfig, n_junctions: parseInt(e.target.value)})}
-                           className="w-full accent-blue-500 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-                         />
-                      </div>
+                      <ParamGroup label="CV Pipeline">
+                        <label className="flex items-center gap-3 cursor-pointer p-4 bg-white/5 rounded-2xl border border-white/10 hover:bg-white/10 transition-colors">
+                          <input type="checkbox" checked={simConfig.use_cv}
+                            onChange={e => setSimConfig({...simConfig, use_cv: e.target.checked})}
+                            className="accent-blue-500 w-4 h-4"
+                          />
+                          <span className="text-sm text-slate-400">Use Computer Vision</span>
+                        </label>
+                      </ParamGroup>
+
+                      <ParamGroup label={`Junctions: ${simConfig.n_junctions}`}>
+                        <input type="range" min={1} max={3} value={simConfig.n_junctions}
+                          onChange={e => setSimConfig({...simConfig, n_junctions: +e.target.value})}
+                          className="w-full accent-blue-500"
+                        />
+                      </ParamGroup>
                     </ParamGroup>
 
                     <ParamGroup label="Reward Function">
@@ -377,6 +440,13 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+              <div className="lg:col-span-3 min-h-[400px]">
+                <GraphPanel history={history} />
+              </div>
+              
+              <div className="lg:col-span-3">
+                 <DatasetImport onDatasetImport={() => setDatasetLoaded(true)} />
+              </div>
             </motion.div>
           )}
 
@@ -386,9 +456,9 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="h-[650px]"
+              className="min-h-[650px]"
             >
-              <AIDecisionLogs currentData={latest} status={status} />
+              <AIDecisionLogs currentData={data} status={status} />
             </motion.div>
           )}
 
@@ -398,7 +468,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="h-[650px]"
+              className="min-h-[650px]"
             >
               <ModelIntelligence />
             </motion.div>
@@ -410,9 +480,9 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="h-[650px]"
+              className="min-h-[650px]"
             >
-              <EnvironmentalTracking currentData={latest} status={status} />
+              <EnvironmentalTracking currentData={data} status={status} />
             </motion.div>
           )}
 
@@ -422,7 +492,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="h-[650px]"
+              className="min-h-[650px]"
             >
               <AutomaticBenchmarking />
             </motion.div>
@@ -434,9 +504,120 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="h-[650px]"
+              className="min-h-[650px]"
             >
               <RouteFinder />
+            </motion.div>
+          )}
+
+          {activeTab === "technique-compare" && (
+            <motion.div
+              key="technique-compare"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="min-h-[650px]"
+            >
+              <TechniqueComparison />
+            </motion.div>
+          )}
+
+          {activeTab === "detection" && (
+            <motion.div
+              key="detection"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="min-h-[650px] flex flex-col gap-6"
+            >
+              <div className="glass-card p-8 rounded-3xl border border-white/[0.08]">
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h3 className="text-xl font-bold text-white flex items-center gap-3">
+                      <div className="p-2 bg-slate-800 rounded-xl">
+                        <Camera className="w-5 h-5 text-blue-400" />
+                      </div>
+                      AI Vehicle Detection
+                    </h3>
+                    <p className="text-slate-500 text-xs mt-1">Upload an image to perform real-time vehicle classification and counting.</p>
+                  </div>
+                  
+                  <div className="relative">
+                    <input 
+                      type="file" 
+                      id="image-upload"
+                      accept="image/*" 
+                      onChange={handleImageUpload}
+                      className="hidden" 
+                    />
+                    <label 
+                      htmlFor="image-upload"
+                      className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-bold transition-all shadow-xl shadow-blue-600/30 cursor-pointer active:scale-95"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Capture</span>
+                    </label>
+                  </div>
+                </div>
+
+                {detLoading && (
+                  <div className="flex flex-col items-center justify-center py-20 bg-slate-900/50 rounded-3xl border border-dashed border-white/10">
+                    <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
+                    <p className="text-slate-400 font-medium animate-pulse">Running YOLOv8 Inference...</p>
+                  </div>
+                )}
+
+                {!detLoading && !detResult && (
+                  <div className="flex flex-col items-center justify-center py-20 bg-slate-900/50 rounded-3xl border border-dashed border-white/10">
+                    <Camera className="w-12 h-12 text-slate-700 mb-4" />
+                    <p className="text-slate-500 text-sm">Select a traffic camera frame or road image to begin</p>
+                  </div>
+                )}
+
+                {detResult && !detLoading && (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div className="lg:col-span-2 relative">
+                      <div className="absolute top-4 left-4 z-10 px-3 py-1.5 bg-slate-900/80 backdrop-blur-md rounded-lg border border-white/10">
+                        <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Annotated Result</p>
+                      </div>
+                      <img 
+                        src={`data:image/jpeg;base64,${detResult.annotated_image}`}
+                        className="rounded-3xl w-full border border-white/10 shadow-2xl" 
+                        alt="detected" 
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="glass-card p-6 rounded-3xl border border-blue-500/20 bg-blue-500/5">
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">Total Count</p>
+                        <div className="flex items-baseline gap-2">
+                          <p className="text-5xl font-black text-blue-400">{detResult.total}</p>
+                          <p className="text-xs text-slate-500 font-bold uppercase">Objects</p>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        {Object.entries(detResult.counts).map(([type, count]) => (
+                          <div key={type} className="flex justify-between items-center p-4 bg-white/5 border border-white/5 rounded-2xl group hover:border-white/10 transition-colors">
+                            <div className="flex items-center gap-3">
+                              <div className="w-2 h-2 rounded-full bg-blue-500/50 group-hover:bg-blue-400 transition-colors" />
+                              <span className="text-sm font-bold capitalize text-slate-400 group-hover:text-slate-200 transition-colors">{type}</span>
+                            </div>
+                            <span className="text-lg font-black text-white">{count as number}</span>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/10">
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                          <span className="text-emerald-400 font-bold block mb-1">Model: YOLOv8 Nano</span>
+                          Pre-trained on COCO dataset. Optimized for real-time edge inference on traffic surveillance streams.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

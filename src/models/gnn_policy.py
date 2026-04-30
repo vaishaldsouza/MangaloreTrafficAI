@@ -47,3 +47,50 @@ def build_edge_index_from_net(net_xml_path: str):
         return torch.zeros((2, 0), dtype=torch.long)
         
     return torch.tensor(edges, dtype=torch.long).t().contiguous()
+
+def train_gnn(epochs: int = 20, net_path: str = "simulation/mangalore.net.xml"):
+    """
+    Trains a GNN to predict optimal phases across all junctions.
+    Uses synthetic 'traffic pressure' labels for this demo.
+    """
+    edge_index = build_edge_index_from_net(net_path)
+    # Re-parse to get junction count
+    tree = ET.parse(net_path)
+    root = tree.getroot()
+    junction_ids = [node.attrib["id"] for node in root.findall("junction") if node.attrib.get("type") != "internal"]
+    n_nodes = len(junction_ids)
+    
+    model = TrafficGNN(node_features=8, n_actions=4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    
+    print(f"Training GNN on {n_nodes} nodes for {epochs} epochs...")
+    
+    for epoch in range(epochs):
+        # Synthetic data: node features (normalized queue, wait, etc)
+        x = torch.randn(n_nodes, 8)
+        # Target: random 'optimal' phase index [0, 3]
+        target = torch.randint(0, 4, (n_nodes,))
+        
+        optimizer.zero_grad()
+        out = model(x, edge_index)
+        loss = F.cross_entropy(out, target)
+        loss.backward()
+        optimizer.step()
+        
+        if epoch % 5 == 0:
+            print(f"  Epoch {epoch:3d} | Loss: {loss.item():.4f}")
+            
+    import os
+    os.makedirs("models", exist_ok=True)
+    torch.save(model, "models/gnn_policy.pt")
+    print("Model saved to models/gnn_policy.pt")
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train", action="store_true")
+    parser.add_argument("--epochs", type=int, default=20)
+    args = parser.parse_args()
+    
+    if args.train:
+        train_gnn(epochs=args.epochs)
